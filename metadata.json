@@ -1,0 +1,5 @@
+{
+  "name": "IdP Center",
+  "description": "A secure, standard, easy-to-use, and manageable independent account center supporting OAuth 2.1 / OIDC, OTP 2FA, and an admin dashboard.",
+  "requestFramePermissions": []
+}
