@@ -18,3 +18,11 @@ View your app in AI Studio: https://ai.studio/apps/098c035f-8143-496d-ad06-1de30
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+
+## Deploy with Docker
+### 构建镜像
+docker build -t idp-center .
+
+### 运行容器
+docker run -d -p 3000:3000 -v $(pwd)/auth.db:/app/auth.db idp-center
