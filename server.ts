@@ -12,7 +12,7 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
-const PORT = 3000;
+const PORT = 5986;
 
 app.use(express.json());
 
@@ -168,7 +168,7 @@ if (!adminExists) {
 const clientExists = db.prepare('SELECT id FROM clients WHERE client_id = ?').get('default-client');
 if (!clientExists) {
   db.prepare('INSERT INTO clients (id, client_id, client_secret, client_name, redirect_uris, grant_types) VALUES (?, ?, ?, ?, ?, ?)').run(
-    crypto.randomUUID(), 'default-client', 'secret123', 'Default Client', 'http://localhost:3000/callback', 'authorization_code'
+    crypto.randomUUID(), 'default-client', 'secret123', 'Default Client', 'http://localhost:5986/callback', 'authorization_code'
   );
 }
 
@@ -383,7 +383,7 @@ app.post('/api/oidc/token', (req, res) => {
   // Generate ID Token (OIDC)
   const user: any = db.prepare('SELECT * FROM users WHERE id = ?').get(authCode.user_id);
   const idToken = jwt.sign({
-    iss: 'http://localhost:3000',
+    iss: 'http://localhost:5986',
     sub: user.id,
     aud: client_id,
     exp: Math.floor(Date.now() / 1000) + (60 * 60),

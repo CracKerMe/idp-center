@@ -76,7 +76,7 @@ export default function ClientsList() {
                 value={newClient.redirect_uris}
                 onChange={e => setNewClient({...newClient, redirect_uris: e.target.value})}
                 className="mt-1 block w-full border border-zinc-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                placeholder="http://localhost:3000/callback"
+                placeholder="http://localhost:5986/callback"
               />
             </div>
             <div className="flex justify-end">

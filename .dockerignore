@@ -5,11 +5,14 @@ node_modules
 # Build output
 dist
 dist-ssr
+build
 *.local
+*.tsbuildinfo
 
 # IDE
 .vscode
 .idea
+.tanstack
 *.swp
 *.swo
 *~
@@ -43,6 +46,8 @@ coverage
 .nyc_output
 
 # Misc
+package-lock.json
+metadata.json
 *.md
 LICENSE
 .editorconfig
