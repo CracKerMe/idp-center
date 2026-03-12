@@ -7,6 +7,7 @@ import { useState, useEffect } from 'react';
 import { createRouter, RouterProvider } from '@tanstack/react-router';
 import { Route as rootRoute } from './routes/__root';
 import { routeTree } from './routeTree.gen';
+import { authFetch } from './utils/fetch';
 
 const router = createRouter({ 
   routeTree,
@@ -26,15 +27,27 @@ export default function App() {
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (token) {
-      fetch('/api/auth/me', {
-        headers: { Authorization: `Bearer ${token}` }
+      authFetch('/api/auth/me')
+      .then(res => {
+        if (res.status === 401 || res.status === 403) {
+          // Token invalid or revoked, clear storage
+          localStorage.removeItem('token');
+          localStorage.removeItem('refresh_token');
+          localStorage.removeItem('session_id');
+          setUser(null);
+          return null;
+        }
+        return res.ok ? res.json() : null;
       })
-      .then(res => res.ok ? res.json() : null)
       .then(data => {
-        setUser(data);
+        if (data) {
+          setUser(data);
+        }
         setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch(() => {
+        setLoading(false);
+      });
     } else {
       setLoading(false);
     }

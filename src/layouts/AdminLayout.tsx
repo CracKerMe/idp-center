@@ -6,10 +6,37 @@ export default function AdminLayout({ user, setUser }: { user: any, setUser: (us
   const navigate = useNavigate();
   const location = useLocation();
 
-  const handleLogout = () => {
-    localStorage.removeItem('token');
-    setUser(null);
-    navigate({ to: '/login' });
+  const handleLogout = async () => {
+    try {
+      // Call server logout API to revoke session and tokens
+      const token = localStorage.getItem('token');
+      const sessionId = localStorage.getItem('session_id');
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json'
+      };
+      
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      if (sessionId) {
+        headers['X-Session-Id'] = sessionId;
+      }
+
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        headers
+      });
+    } catch (error) {
+      console.error('Logout API error:', error);
+      // Continue with local logout even if API fails
+    } finally {
+      // Clear local storage
+      localStorage.removeItem('token');
+      localStorage.removeItem('refresh_token');
+      localStorage.removeItem('session_id');
+      setUser(null);
+      navigate({ to: '/login' });
+    }
   };
 
   const navigation = [

@@ -168,7 +168,7 @@ if (!adminExists) {
 const clientExists = db.prepare('SELECT id FROM clients WHERE client_id = ?').get('default-client');
 if (!clientExists) {
   db.prepare('INSERT INTO clients (id, client_id, client_secret, client_name, redirect_uris, grant_types) VALUES (?, ?, ?, ?, ?, ?)').run(
-    crypto.randomUUID(), 'default-client', 'secret123', 'Default Client', 'http://localhost:5986/callback', 'authorization_code'
+    crypto.randomUUID(), 'default-client', 'secret123', 'Default Client', 'http://localhost:5986/callback,http://localhost:3000/callback', 'authorization_code'
   );
 }
 
@@ -234,6 +234,13 @@ function authenticateToken(req: express.Request, res: express.Response, next: ex
 
   jwt.verify(token, JWT_SECRET, (err: any, user: any) => {
     if (err) return res.sendStatus(403);
+    
+    // Check if token has been revoked in database
+    const tokenRecord: any = db.prepare('SELECT revoked FROM access_tokens WHERE token = ?').get(token);
+    if (tokenRecord && tokenRecord.revoked === 1) {
+      return res.status(401).json({ error: 'Token has been revoked' });
+    }
+    
     (req as any).user = user;
     next();
   });
@@ -283,15 +290,86 @@ app.post('/api/auth/login', (req, res) => {
     }
   }
 
-  const token = jwt.sign({ id: user.id, username: user.username, is_admin: user.is_admin }, JWT_SECRET, { expiresIn: '24h' });
-  logAudit(user.id, 'LOGIN_SUCCESS', req);
-  res.json({ token, user: { id: user.id, username: user.username, email: user.email, is_admin: user.is_admin, otp_enabled: user.otp_enabled } });
+  // Generate access token (short-lived, 15 minutes)
+  const accessToken = jwt.sign(
+    { id: user.id, username: user.username, is_admin: user.is_admin, tenant_id: user.tenant_id },
+    JWT_SECRET,
+    { expiresIn: '15m' }
+  );
+  
+  // Store access token in database
+  const accessExpiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 minutes
+  db.prepare('INSERT INTO access_tokens (id, token, client_id, user_id, expires_at) VALUES (?, ?, ?, ?, ?)').run(
+    crypto.randomUUID(), accessToken, null, user.id, accessExpiresAt
+  );
+
+  // Generate refresh token (long-lived, 7 days)
+  const refreshToken = crypto.randomBytes(32).toString('hex');
+  const refreshExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
+
+  // Create session
+  const sessionId = crypto.randomUUID();
+  const userAgent = req.get('User-Agent') || '';
+  const ip = req.ip || req.connection.remoteAddress || 'unknown';
+  const deviceInfo = `${userAgent}`;
+
+  db.prepare('INSERT INTO sessions (id, user_id, device_info, ip_address) VALUES (?, ?, ?, ?)').run(
+    sessionId, user.id, deviceInfo, ip
+  );
+
+  // Store refresh token with session association
+  db.prepare('INSERT INTO refresh_tokens (id, token, user_id, client_id, expires_at) VALUES (?, ?, ?, ?, ?)').run(
+    crypto.randomUUID(), refreshToken, user.id, null, refreshExpiresAt
+  );
+
+  logAudit(user.id, 'LOGIN_SUCCESS', req, `Session: ${sessionId}`);
+
+  res.json({
+    access_token: accessToken,
+    refresh_token: refreshToken,
+    expires_in: 900, // 15 minutes
+    token_type: 'Bearer',
+    user: {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      is_admin: user.is_admin,
+      otp_enabled: user.otp_enabled,
+      tenant_id: user.tenant_id
+    },
+    session_id: sessionId
+  });
 });
 
 app.get('/api/auth/me', authenticateToken, (req, res) => {
   const user: any = db.prepare('SELECT id, username, email, is_admin, otp_enabled FROM users WHERE id = ?').get((req as any).user.id);
   if (!user) return res.sendStatus(404);
   res.json(user);
+});
+
+// Logout - Revoke session and tokens
+app.post('/api/auth/logout', authenticateToken, (req, res) => {
+  const userId = (req as any).user.id;
+  const sessionId = req.headers['x-session-id'];
+  
+  try {
+    // Revoke all refresh tokens for this user
+    db.prepare('UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ?').run(userId);
+    
+    // Delete session if session_id provided
+    if (sessionId) {
+      db.prepare('DELETE FROM sessions WHERE id = ? AND user_id = ?').run(sessionId, userId);
+    }
+    
+    // Revoke all access tokens (mark as revoked)
+    db.prepare('UPDATE access_tokens SET revoked = 1 WHERE user_id = ?').run(userId);
+    
+    logAudit(userId, 'LOGOUT', req, sessionId ? `Session: ${sessionId}` : 'All sessions');
+    res.json({ message: 'Logged out successfully' });
+  } catch (err: any) {
+    console.error('Logout error:', err);
+    res.status(500).json({ error: 'Failed to logout' });
+  }
 });
 
 // OTP
@@ -373,15 +451,27 @@ app.post('/api/oidc/token', (req, res) => {
   
   db.prepare('UPDATE auth_codes SET used = 1 WHERE id = ?').run(authCode.id);
   
-  const token = crypto.randomBytes(32).toString('hex');
-  const expiresAt = new Date(Date.now() + 60 * 60000).toISOString(); // 1 hour
-  
-  db.prepare('INSERT INTO access_tokens (id, token, client_id, user_id, expires_at) VALUES (?, ?, ?, ?, ?)').run(
-    crypto.randomUUID(), token, client_id, authCode.user_id, expiresAt
+  const user: any = db.prepare('SELECT * FROM users WHERE id = ?').get(authCode.user_id);
+  if (!user) {
+    return res.status(400).json({ error: 'User not found' });
+  }
+
+  // Generate JWT access token (same as login, compatible with IDP center)
+  const accessToken = jwt.sign(
+    { id: user.id, username: user.username, is_admin: user.is_admin, tenant_id: user.tenant_id },
+    JWT_SECRET,
+    { expiresIn: '24h' }
+  );
+
+  // Generate refresh token for the OAuth client
+  const refreshToken = crypto.randomBytes(32).toString('hex');
+  const refreshExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
+
+  db.prepare('INSERT INTO refresh_tokens (id, token, user_id, client_id, expires_at) VALUES (?, ?, ?, ?, ?)').run(
+    crypto.randomUUID(), refreshToken, user.id, client_id, refreshExpiresAt
   );
   
   // Generate ID Token (OIDC)
-  const user: any = db.prepare('SELECT * FROM users WHERE id = ?').get(authCode.user_id);
   const idToken = jwt.sign({
     iss: 'http://localhost:5986',
     sub: user.id,
@@ -393,10 +483,18 @@ app.post('/api/oidc/token', (req, res) => {
   }, JWT_SECRET);
   
   res.json({
-    access_token: token,
+    access_token: accessToken,
+    refresh_token: refreshToken,
     token_type: 'Bearer',
-    expires_in: 3600,
-    id_token: idToken
+    expires_in: 86400, // 24 hours
+    id_token: idToken,
+    user: {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      is_admin: user.is_admin,
+      tenant_id: user.tenant_id
+    }
   });
 });
 
@@ -611,9 +709,15 @@ app.post('/api/auth/refresh', (req, res) => {
     { expiresIn: '24h' }
   );
   
+  // Store new access token in database
+  const accessExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24 hours
+  db.prepare('INSERT INTO access_tokens (id, token, client_id, user_id, expires_at) VALUES (?, ?, ?, ?, ?)').run(
+    crypto.randomUUID(), accessToken, storedToken.client_id, user.id, accessExpiresAt
+  );
+  
   // Optionally rotate refresh token
   const newRefreshToken = crypto.randomBytes(32).toString('hex');
-  const newExpiresAt = new Date(Date.now() * 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
+  const newExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
   
   db.prepare('UPDATE refresh_tokens SET revoked = 1 WHERE id = ?').run(storedToken.id);
   db.prepare('INSERT INTO refresh_tokens (id, token, user_id, client_id, expires_at) VALUES (?, ?, ?, ?, ?)').run(
@@ -681,25 +785,40 @@ app.put('/api/user/password', authenticateToken, (req, res) => {
 app.get('/api/user/sessions', authenticateToken, (req, res) => {
   const userId = (req as any).user.id;
   const sessions = db.prepare(`
-    SELECT id, device_info, ip_address, last_active, created_at 
-    FROM sessions 
-    WHERE user_id = ? 
-    ORDER BY last_active DESC
+    SELECT s.id, s.device_info, s.ip_address, s.last_active, s.created_at,
+           (SELECT COUNT(*) FROM refresh_tokens rt WHERE rt.user_id = s.user_id AND rt.revoked = 0) as active_tokens
+    FROM sessions s
+    WHERE s.user_id = ? 
+    ORDER BY s.last_active DESC
   `).all(userId);
   res.json(sessions);
 });
 
-// User Self-Service: Revoke Session
+// User Self-Service: Revoke Session (Remote Logout)
 app.delete('/api/user/sessions/:id', authenticateToken, (req, res) => {
   const userId = (req as any).user.id;
   const { id } = req.params;
+  const currentSessionId = req.headers['x-session-id'];
   
-  const result = db.prepare('DELETE FROM sessions WHERE id = ? AND user_id = ?').run(id, userId);
-  if (result.changes === 0) {
+  // Prevent revoking current session
+  if (currentSessionId && id === currentSessionId) {
+    return res.status(400).json({ error: 'Cannot revoke current session. Use logout instead.' });
+  }
+  
+  // Check if session belongs to user
+  const session: any = db.prepare('SELECT * FROM sessions WHERE id = ? AND user_id = ?').get(id, userId);
+  if (!session) {
     return res.status(404).json({ error: 'Session not found' });
   }
   
-  logAudit(userId, 'SESSION_REVOKED', req, `Session ${id} revoked`);
+  // Revoke all refresh tokens for this session/user (simplified: revoke all user tokens)
+  // In production, you'd want to associate refresh tokens with specific sessions
+  db.prepare('UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ?').run(userId);
+  
+  // Delete session
+  db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
+  
+  logAudit(userId, 'SESSION_REVOKED', req, `Session ${id} revoked remotely`);
   res.json({ message: 'Session revoked successfully' });
 });
 
@@ -707,6 +826,38 @@ app.delete('/api/user/sessions/:id', authenticateToken, (req, res) => {
 app.get('/api/admin/tenants', authenticateAdmin, (req, res) => {
   const tenants = db.prepare('SELECT * FROM tenants ORDER BY created_at DESC').all();
   res.json(tenants);
+});
+
+// Admin: Get All Sessions across all users
+app.get('/api/admin/sessions', authenticateAdmin, (req, res) => {
+  const sessions = db.prepare(`
+    SELECT s.id, s.device_info, s.ip_address, s.last_active, s.created_at,
+           u.username, u.email,
+           (SELECT COUNT(*) FROM refresh_tokens rt WHERE rt.user_id = s.user_id AND rt.revoked = 0) as active_tokens
+    FROM sessions s
+    LEFT JOIN users u ON s.user_id = u.id
+    ORDER BY s.last_active DESC
+  `).all();
+  res.json(sessions);
+});
+
+// Admin: Revoke any session
+app.delete('/api/admin/sessions/:id', authenticateAdmin, (req, res) => {
+  const { id } = req.params;
+  
+  const session: any = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id);
+  if (!session) {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+  
+  // Revoke all refresh tokens for this user
+  db.prepare('UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ?').run(session.user_id);
+  
+  // Delete session
+  db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
+  
+  logAudit((req as any).user.id, 'ADMIN_SESSION_REVOKED', req, `Session ${id} revoked by admin`);
+  res.json({ message: 'Session revoked successfully' });
 });
 
 app.post('/api/admin/tenants', authenticateAdmin, (req, res) => {

@@ -23,9 +23,10 @@ export default function Login({ setUser }: { setUser: (user: any) => void }) {
     });
     
     const data = await res.json();
-    
+
     if (res.ok) {
-      localStorage.setItem('token', data.token);
+      localStorage.setItem('token', data.access_token);
+      localStorage.setItem('refresh_token', data.refresh_token);
       setUser(data.user);
       const redirect = searchParams.redirect;
       if (redirect) {
