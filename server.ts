@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import Database from 'better-sqlite3';
@@ -112,6 +113,25 @@ db.exec(`
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id)
   );
+
+  CREATE TABLE IF NOT EXISTS linked_accounts (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    provider_user_id TEXT NOT NULL,
+    provider_username TEXT,
+    access_token TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    UNIQUE (provider, provider_user_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS oauth_states (
+    state TEXT PRIMARY KEY,
+    expires_at DATETIME NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 // Database Migration - Add missing columns to existing tables
@@ -174,6 +194,204 @@ if (!clientExists) {
 
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-jwt-key-change-in-prod';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'super-secret-refresh-key-change-in-prod';
+
+// --- GitHub OAuth Interfaces ---
+
+interface GitHubIdentity {
+  id: number;           // GitHub 用户 ID
+  login: string;        // GitHub 用户名
+  email: string | null; // 公开邮箱（可能为 null）
+  avatar_url: string;
+  name: string | null;
+}
+
+interface LinkedAccount {
+  id: string;
+  user_id: string;
+  provider: string;
+  provider_user_id: string;
+  provider_username: string;
+  access_token: string;  // 加密后存储
+  created_at: string;
+  updated_at: string;
+}
+
+// --- GitHub OAuth Helper Functions ---
+
+// Derive a 32-byte AES key: prefer ENCRYPTION_KEY env var, fallback to SHA-256 of JWT_SECRET
+function getEncryptionKey(): Buffer {
+  const envKey = process.env.ENCRYPTION_KEY;
+  if (envKey) {
+    // Accept hex-encoded 32-byte key or raw string; normalise to 32 bytes via SHA-256
+    return crypto.createHash('sha256').update(envKey).digest();
+  }
+  return crypto.createHash('sha256').update(JWT_SECRET).digest();
+}
+
+// Encrypt a plaintext token using AES-256-GCM.
+// Returns a colon-delimited string: "<iv_hex>:<authTag_hex>:<ciphertext_hex>"
+function encryptToken(token: string): string {
+  const key = getEncryptionKey();
+  const iv = crypto.randomBytes(12); // 96-bit IV recommended for GCM
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const encrypted = Buffer.concat([cipher.update(token, 'utf8'), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return `${iv.toString('hex')}:${authTag.toString('hex')}:${encrypted.toString('hex')}`;
+}
+
+// Decrypt a token produced by encryptToken.
+function decryptToken(encrypted: string): string {
+  const [ivHex, authTagHex, ciphertextHex] = encrypted.split(':');
+  if (!ivHex || !authTagHex || !ciphertextHex) {
+    throw new Error('Invalid encrypted token format');
+  }
+  const key = getEncryptionKey();
+  const iv = Buffer.from(ivHex, 'hex');
+  const authTag = Buffer.from(authTagHex, 'hex');
+  const ciphertext = Buffer.from(ciphertextHex, 'hex');
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  decipher.setAuthTag(authTag);
+  const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+  return decrypted.toString('utf8');
+}
+
+// Generate a cryptographically random OAuth state parameter (64 hex chars = 32 bytes entropy).
+function generateOAuthState(): string {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+// Exchange a GitHub OAuth authorization code for an access token.
+async function exchangeGitHubCode(code: string): Promise<string> {
+  const response = await fetch('https://github.com/login/oauth/access_token', {
+    method: 'POST',
+    headers: {
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      client_id: process.env.GITHUB_CLIENT_ID,
+      client_secret: process.env.GITHUB_CLIENT_SECRET,
+      code,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`GitHub token exchange failed: ${response.status}`);
+  }
+
+  const data = await response.json() as any;
+  if (data.error) {
+    throw new Error(`GitHub token exchange error: ${data.error_description || data.error}`);
+  }
+  if (!data.access_token) {
+    throw new Error('GitHub token exchange returned no access_token');
+  }
+
+  return data.access_token as string;
+}
+
+// Fetch the authenticated GitHub user's profile.
+async function getGitHubUser(accessToken: string): Promise<GitHubIdentity> {
+  const response = await fetch('https://api.github.com/user', {
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`GitHub user API failed: ${response.status}`);
+  }
+
+  const data = await response.json() as any;
+  return {
+    id: data.id,
+    login: data.login,
+    email: data.email ?? null,
+    avatar_url: data.avatar_url,
+    name: data.name ?? null,
+  };
+}
+
+// Fetch the primary verified email from the GitHub user's email list.
+// Returns null if no primary+verified email is found.
+async function getGitHubEmails(accessToken: string): Promise<string | null> {
+  const response = await fetch('https://api.github.com/user/emails', {
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`GitHub emails API failed: ${response.status}`);
+  }
+
+  const emails = await response.json() as Array<{ email: string; primary: boolean; verified: boolean }>;
+  const primary = emails.find(e => e.primary && e.verified);
+  return primary ? primary.email : null;
+}
+
+// Account Linker: find or create a local user from a GitHub identity
+function findOrCreateUserFromGitHub(identity: GitHubIdentity, accessToken: string): any {
+  const providerUserId = String(identity.id);
+  const encryptedToken = encryptToken(accessToken);
+  const now = new Date().toISOString();
+
+  // Priority 1: look up by provider_user_id in linked_accounts
+  const existingLink = db.prepare(
+    'SELECT la.*, u.* FROM linked_accounts la JOIN users u ON la.user_id = u.id WHERE la.provider = ? AND la.provider_user_id = ?'
+  ).get('github', providerUserId) as any;
+
+  if (existingLink) {
+    // Update the linked account with fresh token and username
+    db.prepare(
+      'UPDATE linked_accounts SET provider_username = ?, access_token = ?, updated_at = ? WHERE provider = ? AND provider_user_id = ?'
+    ).run(identity.login, encryptedToken, now, 'github', providerUserId);
+
+    // Return the associated user
+    return db.prepare('SELECT * FROM users WHERE id = ?').get(existingLink.user_id) as any;
+  }
+
+  // Priority 2: match by email in users table
+  if (identity.email) {
+    const userByEmail = db.prepare('SELECT * FROM users WHERE email = ?').get(identity.email) as any;
+    if (userByEmail) {
+      // Create a new linked_account linking this GitHub identity to the existing user
+      db.prepare(
+        'INSERT INTO linked_accounts (id, user_id, provider, provider_user_id, provider_username, access_token, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(crypto.randomUUID(), userByEmail.id, 'github', providerUserId, identity.login, encryptedToken, now, now);
+
+      return userByEmail;
+    }
+  }
+
+  // Priority 3: create a new user + linked_account
+  let username = identity.login;
+
+  // Resolve username conflicts by appending a 4-char random hex suffix
+  const usernameConflict = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
+  if (usernameConflict) {
+    const suffix = crypto.randomBytes(2).toString('hex'); // 4 hex chars
+    username = `${username}_${suffix}`;
+  }
+
+  // Use bcrypt hash of empty string as a non-loginable placeholder
+  const placeholderPasswordHash = bcrypt.hashSync('', 10);
+
+  const newUserId = crypto.randomUUID();
+  db.prepare(
+    'INSERT INTO users (id, username, email, password_hash, is_active, is_admin, created_at, updated_at) VALUES (?, ?, ?, ?, 1, 0, ?, ?)'
+  ).run(newUserId, username, identity.email ?? null, placeholderPasswordHash, now, now);
+
+  db.prepare(
+    'INSERT INTO linked_accounts (id, user_id, provider, provider_user_id, provider_username, access_token, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(crypto.randomUUID(), newUserId, 'github', providerUserId, identity.login, encryptedToken, now, now);
+
+  return db.prepare('SELECT * FROM users WHERE id = ?').get(newUserId) as any;
+}
 
 // Password strength validation
 interface PasswordStrength {
@@ -300,7 +518,7 @@ app.post('/api/auth/login', (req, res) => {
   // Store access token in database
   const accessExpiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 minutes
   db.prepare('INSERT INTO access_tokens (id, token, client_id, user_id, expires_at) VALUES (?, ?, ?, ?, ?)').run(
-    crypto.randomUUID(), accessToken, null, user.id, accessExpiresAt
+    crypto.randomUUID(), accessToken, 'system', user.id, accessExpiresAt
   );
 
   // Generate refresh token (long-lived, 7 days)
@@ -712,7 +930,7 @@ app.post('/api/auth/refresh', (req, res) => {
   // Store new access token in database
   const accessExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24 hours
   db.prepare('INSERT INTO access_tokens (id, token, client_id, user_id, expires_at) VALUES (?, ?, ?, ?, ?)').run(
-    crypto.randomUUID(), accessToken, storedToken.client_id, user.id, accessExpiresAt
+    crypto.randomUUID(), accessToken, storedToken.client_id || 'system', user.id, accessExpiresAt
   );
   
   // Optionally rotate refresh token
@@ -820,6 +1038,15 @@ app.delete('/api/user/sessions/:id', authenticateToken, (req, res) => {
   
   logAudit(userId, 'SESSION_REVOKED', req, `Session ${id} revoked remotely`);
   res.json({ message: 'Session revoked successfully' });
+});
+
+// User Self-Service: Get Linked Accounts
+app.get('/api/user/linked-accounts', authenticateToken, (req, res) => {
+  const userId = (req as any).user.id;
+  const accounts = db.prepare(
+    'SELECT provider, provider_username, created_at FROM linked_accounts WHERE user_id = ?'
+  ).all(userId);
+  res.json(accounts);
 });
 
 // Admin: Tenant Management
@@ -977,6 +1204,142 @@ app.get('/api/admin/stats', authenticateAdmin, (req, res) => {
       registrations: recentRegistrations.count
     }
   });
+});
+
+// GitHub OAuth Config
+app.get('/api/auth/github/config', (req, res) => {
+  const enabled = !!(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET);
+  res.json({ enabled });
+});
+
+// GitHub OAuth - Initiate Authorization
+app.get('/api/auth/github', (req, res) => {
+  const clientId = process.env.GITHUB_CLIENT_ID;
+  const clientSecret = process.env.GITHUB_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    return res.status(503).json({
+      error: 'GitHub OAuth is not configured',
+      code: 'GITHUB_NOT_CONFIGURED'
+    });
+  }
+
+  const callbackUrl = process.env.GITHUB_CALLBACK_URL || 'http://localhost:5986/api/auth/github/callback';
+
+  // Clean up expired states before inserting a new one
+  db.prepare('DELETE FROM oauth_states WHERE expires_at < CURRENT_TIMESTAMP').run();
+
+  // Generate state and store in oauth_states with 10-minute expiry
+  const state = generateOAuthState();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  db.prepare('INSERT INTO oauth_states (state, expires_at) VALUES (?, ?)').run(state, expiresAt);
+
+  // Construct GitHub authorization URL
+  const authUrl = new URL('https://github.com/login/oauth/authorize');
+  authUrl.searchParams.set('client_id', clientId);
+  authUrl.searchParams.set('redirect_uri', callbackUrl);
+  authUrl.searchParams.set('scope', 'read:user user:email');
+  authUrl.searchParams.set('state', state);
+
+  return res.redirect(302, authUrl.toString());
+});
+
+// GitHub OAuth - Callback Handler
+app.get('/api/auth/github/callback', async (req, res) => {
+  const { code, state, error: githubError } = req.query as Record<string, string>;
+
+  // Handle GitHub error responses (e.g. user cancelled authorization)
+  if (githubError) {
+    const errorDesc = githubError === 'access_denied'
+      ? 'GitHub authorization was cancelled'
+      : githubError;
+    logAudit(null, 'GITHUB_LOGIN_FAILED', req, `GitHub error: ${githubError}`);
+    return res.redirect(302, `/login?error=${encodeURIComponent(errorDesc)}`);
+  }
+
+  // Validate state parameter
+  const stateRecord = db.prepare(
+    'SELECT state, expires_at FROM oauth_states WHERE state = ?'
+  ).get(state) as { state: string; expires_at: string } | undefined;
+
+  if (!stateRecord || new Date(stateRecord.expires_at) < new Date()) {
+    // Delete expired record if it exists
+    if (stateRecord) {
+      db.prepare('DELETE FROM oauth_states WHERE state = ?').run(state);
+    }
+    return res.status(400).json({ error: 'Invalid or expired OAuth state' });
+  }
+
+  // Delete state immediately after validation (prevent replay attacks)
+  db.prepare('DELETE FROM oauth_states WHERE state = ?').run(state);
+
+  // Exchange code for GitHub access token
+  let githubAccessToken: string;
+  try {
+    githubAccessToken = await exchangeGitHubCode(code);
+  } catch (err: any) {
+    logAudit(null, 'GITHUB_LOGIN_FAILED', req, `Token exchange failed: ${err.message}`);
+    return res.redirect(302, `/login?error=${encodeURIComponent('Failed to exchange GitHub authorization code')}`);
+  }
+
+  // Fetch GitHub user profile and emails
+  let identity: GitHubIdentity;
+  try {
+    identity = await getGitHubUser(githubAccessToken);
+    // Prefer primary+verified email from /user/emails over public profile email
+    const verifiedEmail = await getGitHubEmails(githubAccessToken);
+    if (verifiedEmail) {
+      identity = { ...identity, email: verifiedEmail };
+    }
+  } catch (err: any) {
+    logAudit(null, 'GITHUB_LOGIN_FAILED', req, `GitHub user info failed: ${err.message}`);
+    return res.redirect(302, `/login?error=${encodeURIComponent('Failed to retrieve GitHub user information')}`);
+  }
+
+  // Find or create local user account
+  let user: any;
+  try {
+    user = findOrCreateUserFromGitHub(identity, githubAccessToken);
+  } catch (err: any) {
+    logAudit(null, 'GITHUB_LOGIN_FAILED', req, `Account linking failed: ${err.message}`);
+    return res.redirect(302, `/login?error=${encodeURIComponent('Failed to complete GitHub login')}`);
+  }
+
+  // Generate JWT access token (same format as password login)
+  const accessToken = jwt.sign(
+    { id: user.id, username: user.username, is_admin: user.is_admin, tenant_id: user.tenant_id },
+    JWT_SECRET,
+    { expiresIn: '15m' }
+  );
+
+  // Store access token in database
+  const accessExpiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+  db.prepare('INSERT INTO access_tokens (id, token, client_id, user_id, expires_at) VALUES (?, ?, ?, ?, ?)').run(
+    crypto.randomUUID(), accessToken, 'system', user.id, accessExpiresAt
+  );
+
+  // Generate refresh token (long-lived, 7 days)
+  const refreshToken = crypto.randomBytes(32).toString('hex');
+  const refreshExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  // Create session record
+  const sessionId = crypto.randomUUID();
+  const userAgent = req.get('User-Agent') || '';
+  const ip = req.ip || req.connection.remoteAddress || 'unknown';
+  db.prepare('INSERT INTO sessions (id, user_id, device_info, ip_address) VALUES (?, ?, ?, ?)').run(
+    sessionId, user.id, userAgent, ip
+  );
+
+  // Store refresh token
+  db.prepare('INSERT INTO refresh_tokens (id, token, user_id, client_id, expires_at) VALUES (?, ?, ?, ?, ?)').run(
+    crypto.randomUUID(), refreshToken, user.id, null, refreshExpiresAt
+  );
+
+  // Write success audit log
+  logAudit(user.id, 'GITHUB_LOGIN_SUCCESS', req, `GitHub username: ${identity.login}`);
+
+  // Redirect to frontend with tokens in URL parameters
+  return res.redirect(302, `/?access_token=${encodeURIComponent(accessToken)}&refresh_token=${encodeURIComponent(refreshToken)}`);
 });
 
 // Vite Middleware

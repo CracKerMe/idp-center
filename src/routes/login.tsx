@@ -2,9 +2,10 @@ import { createFileRoute, redirect } from '@tanstack/react-router';
 import Login from '../pages/Login';
 
 export const Route = createFileRoute('/login')({
-  validateSearch: (search: Record<string, unknown>): { redirect?: string } => {
+  validateSearch: (search: Record<string, unknown>): { redirect?: string; error?: string } => {
     return {
       redirect: search.redirect as string | undefined,
+      error: search.error as string | undefined,
     };
   },
   beforeLoad: ({ context }) => {

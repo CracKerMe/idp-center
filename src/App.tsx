@@ -25,6 +25,17 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Handle GitHub OAuth callback tokens in URL params
+    const params = new URLSearchParams(window.location.search);
+    const accessToken = params.get('access_token');
+    const refreshToken = params.get('refresh_token');
+    if (accessToken) {
+      localStorage.setItem('token', accessToken);
+      if (refreshToken) localStorage.setItem('refresh_token', refreshToken);
+      // Clean up URL without triggering a reload
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+
     const token = localStorage.getItem('token');
     if (token) {
       authFetch('/api/auth/me')
