@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useSearch, useNavigate } from '@tanstack/react-router';
 import { Shield, CheckCircle, XCircle } from 'lucide-react';
+import { authFetch } from '../utils/fetch';
 
 export default function Authorize({ user }: { user: any }) {
   const searchParams: any = useSearch({ strict: false });
@@ -41,12 +42,9 @@ export default function Authorize({ user }: { user: any }) {
       return;
     }
 
-    const res = await fetch('/api/oidc/authorize', {
+    const res = await authFetch('/api/oidc/authorize', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${localStorage.getItem('token')}`
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         client_id: clientId,
         redirect_uri: redirectUri,

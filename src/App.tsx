@@ -5,7 +5,6 @@
 
 import { useState, useEffect } from 'react';
 import { createRouter, RouterProvider } from '@tanstack/react-router';
-import { Route as rootRoute } from './routes/__root';
 import { routeTree } from './routeTree.gen';
 import { authFetch } from './utils/fetch';
 
@@ -25,43 +24,67 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Handle GitHub OAuth callback tokens in URL params
+    // Handle GitHub OAuth callback — exchange short-lived code for tokens
     const params = new URLSearchParams(window.location.search);
-    const accessToken = params.get('access_token');
-    const refreshToken = params.get('refresh_token');
-    if (accessToken) {
-      localStorage.setItem('token', accessToken);
-      if (refreshToken) localStorage.setItem('refresh_token', refreshToken);
-      // Clean up URL without triggering a reload
-      window.history.replaceState({}, '', window.location.pathname);
-    }
+    const githubCode = params.get('github_code');
+    const sessionId = params.get('session_id');
 
-    const token = localStorage.getItem('token');
-    if (token) {
-      authFetch('/api/auth/me')
-      .then(res => {
-        if (res.status === 401 || res.status === 403) {
-          // Token invalid or revoked, clear storage
-          localStorage.removeItem('token');
-          localStorage.removeItem('refresh_token');
-          localStorage.removeItem('session_id');
-          setUser(null);
-          return null;
+    const init = async () => {
+      if (githubCode) {
+        // Clean up URL immediately
+        window.history.replaceState({}, '', window.location.pathname);
+        try {
+          const exchangeRes = await fetch('/api/auth/github/exchange', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code: githubCode })
+          });
+          if (exchangeRes.ok) {
+            const data = await exchangeRes.json();
+            localStorage.setItem('token', data.access_token);
+            localStorage.setItem('refresh_token', data.refresh_token);
+            if (sessionId) localStorage.setItem('session_id', sessionId);
+            if (data.user) {
+              setUser(data.user);
+              setLoading(false);
+              return;
+            }
+          }
+        } catch {
+          // Fall through to normal token check
         }
-        return res.ok ? res.json() : null;
-      })
-      .then(data => {
-        if (data) {
-          setUser(data);
+      }
+
+      // Legacy: handle old-style tokens in URL (backwards compat)
+      const accessToken = params.get('access_token');
+      const refreshToken = params.get('refresh_token');
+      if (accessToken) {
+        localStorage.setItem('token', accessToken);
+        if (refreshToken) localStorage.setItem('refresh_token', refreshToken);
+        window.history.replaceState({}, '', window.location.pathname);
+      }
+
+      const token = localStorage.getItem('token');
+      if (token) {
+        try {
+          const res = await authFetch('/api/auth/me');
+          if (res.status === 401 || res.status === 403) {
+            localStorage.removeItem('token');
+            localStorage.removeItem('refresh_token');
+            localStorage.removeItem('session_id');
+            setUser(null);
+          } else if (res.ok) {
+            const data = await res.json();
+            if (data) setUser(data);
+          }
+        } catch {
+          // ignore
         }
-        setLoading(false);
-      })
-      .catch(() => {
-        setLoading(false);
-      });
-    } else {
+      }
       setLoading(false);
-    }
+    };
+
+    init();
   }, []);
 
   if (loading) return <div className="min-h-screen flex items-center justify-center">Loading...</div>;

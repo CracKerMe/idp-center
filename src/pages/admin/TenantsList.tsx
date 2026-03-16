@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Building, Plus, Edit, Trash2, Search, MoreVertical, CheckCircle, XCircle } from 'lucide-react';
+import { authFetch } from '../../utils/fetch';
 
 interface Tenant {
   id: string;
@@ -26,11 +27,8 @@ export default function TenantsList() {
   }, []);
 
   const fetchTenants = async () => {
-    const token = localStorage.getItem('token');
     try {
-      const res = await fetch('/api/admin/tenants', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await authFetch('/api/admin/tenants');
       if (res.ok) {
         const data = await res.json();
         setTenants(data);
@@ -45,22 +43,18 @@ export default function TenantsList() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    const token = localStorage.getItem('token');
     const url = editingTenant ? `/api/admin/tenants/${editingTenant.id}` : '/api/admin/tenants';
     const method = editingTenant ? 'PUT' : 'POST';
 
     try {
-      const res = await fetch(url, {
+      const res = await authFetch(url, {
         method,
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: formData.name,
           domain: formData.domain,
           is_active: editingTenant ? editingTenant.is_active : true,
-          settings: formData.settings
+          settings: JSON.parse(formData.settings || '{}')
         })
       });
 
@@ -83,11 +77,9 @@ export default function TenantsList() {
       return;
     }
 
-    const token = localStorage.getItem('token');
     try {
-      const res = await fetch(`/api/admin/tenants/${id}`, {
+      const res = await authFetch(`/api/admin/tenants/${id}`, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` }
       });
 
       if (res.ok) {

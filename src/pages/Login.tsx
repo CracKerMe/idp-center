@@ -8,7 +8,11 @@ export default function Login({ setUser }: { setUser: (user: any) => void }) {
   const [password, setPassword] = useState('');
   const [otp, setOtp] = useState('');
   const [requireOtp, setRequireOtp] = useState(false);
+  const [rememberMe, setRememberMe] = useState(false);
+  const [trustDevice, setTrustDevice] = useState(false);
   const [error, setError] = useState('');
+  const [emailNotVerified, setEmailNotVerified] = useState(false);
+  const [resendStatus, setResendStatus] = useState<'idle' | 'sending' | 'sent'>('idle');
   const [githubEnabled, setGithubEnabled] = useState<boolean | null>(null);
   const navigate = useNavigate();
   const searchParams: any = useSearch({ strict: false });
@@ -28,6 +32,20 @@ export default function Login({ setUser }: { setUser: (user: any) => void }) {
       .catch(() => setGithubEnabled(false));
   }, []);
 
+  const handleResendVerification = async () => {
+    setResendStatus('sending');
+    try {
+      await fetch('/api/auth/email/resend-public', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username })
+      });
+      setResendStatus('sent');
+    } catch {
+      setResendStatus('idle');
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -35,7 +53,7 @@ export default function Login({ setUser }: { setUser: (user: any) => void }) {
     const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password, otp: otp || undefined })
+      body: JSON.stringify({ username, password, otp: otp || undefined, remember_me: rememberMe, trust_device: trustDevice })
     });
     
     const data = await res.json();
@@ -43,9 +61,12 @@ export default function Login({ setUser }: { setUser: (user: any) => void }) {
     if (res.ok) {
       localStorage.setItem('token', data.access_token);
       localStorage.setItem('refresh_token', data.refresh_token);
+      if (data.session_id) {
+        localStorage.setItem('session_id', data.session_id);
+      }
       setUser(data.user);
       const redirect = searchParams.redirect;
-      if (redirect) {
+      if (redirect && typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//')) {
         window.location.href = redirect;
       } else {
         navigate({ to: '/' });
@@ -54,7 +75,22 @@ export default function Login({ setUser }: { setUser: (user: any) => void }) {
       if (data.requireOtp) {
         setRequireOtp(true);
       } else {
-        setError(data.error || 'Login failed');
+        // Map backend error codes to user-friendly messages
+        const errorMessages: Record<string, string> = {
+          'EMAIL_NOT_VERIFIED': 'Your email has not been verified. Please check your inbox for a verification link.',
+          'ACCOUNT_PENDING_DELETION': 'This account is scheduled for deletion. Please contact support to cancel.',
+          'ACCOUNT_LOCKED': data.unlock_at
+            ? `Account is temporarily locked. Try again after ${new Date(data.unlock_at).toLocaleTimeString()}.`
+            : 'Account is temporarily locked due to too many failed attempts.',
+          'ACCOUNT_DISABLED': 'This account has been disabled. Please contact an administrator.',
+        };
+        if (data.error === 'EMAIL_NOT_VERIFIED') {
+          setEmailNotVerified(true);
+          setResendStatus('idle');
+        } else {
+          setEmailNotVerified(false);
+        }
+        setError(errorMessages[data.error] || data.error || 'Login failed');
       }
     }
   };
@@ -81,10 +117,26 @@ export default function Login({ setUser }: { setUser: (user: any) => void }) {
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -8 }}
                   transition={{ duration: 0.18, ease: 'easeOut' }}
-                  className="text-red-600 text-sm text-center"
+                  className="text-sm text-center"
                   data-testid="error-message"
                 >
-                  {error}
+                  <p className="text-red-600">{error}</p>
+                  {emailNotVerified && (
+                    <div className="mt-2">
+                      {resendStatus === 'sent' ? (
+                        <p className="text-green-600">Verification email sent. Please check your inbox.</p>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={resendStatus === 'sending'}
+                          onClick={handleResendVerification}
+                          className="text-indigo-600 hover:text-indigo-500 font-medium disabled:opacity-50"
+                        >
+                          {resendStatus === 'sending' ? 'Sending...' : 'Resend verification email'}
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </motion.div>
               )}
             </AnimatePresence>
@@ -147,6 +199,27 @@ export default function Login({ setUser }: { setUser: (user: any) => void }) {
               )}
             </AnimatePresence>
 
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm text-zinc-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={rememberMe}
+                  onChange={(e) => setRememberMe(e.target.checked)}
+                  className="h-4 w-4 text-indigo-600 border-zinc-300 rounded focus:ring-indigo-500"
+                />
+                Remember me
+              </label>
+              <label className="flex items-center gap-2 text-sm text-zinc-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={trustDevice}
+                  onChange={(e) => setTrustDevice(e.target.checked)}
+                  className="h-4 w-4 text-indigo-600 border-zinc-300 rounded focus:ring-indigo-500"
+                />
+                Trust this device
+              </label>
+            </div>
+
             <div>
               <button
                 type="submit"
@@ -177,7 +250,7 @@ export default function Login({ setUser }: { setUser: (user: any) => void }) {
                   <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                     <path fillRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clipRule="evenodd" />
                   </svg>
-                  使用 GitHub 登录
+                  Sign in with GitHub
                 </a>
               </div>
             </div>

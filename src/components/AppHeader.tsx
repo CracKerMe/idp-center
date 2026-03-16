@@ -1,6 +1,7 @@
 import { Link, useLocation, useNavigate } from '@tanstack/react-router';
 import { Shield, LogOut, User } from 'lucide-react';
 import { clsx } from 'clsx';
+import { authFetch } from '../utils/fetch';
 
 interface AppHeaderProps {
   user: any;
@@ -13,29 +14,13 @@ export default function AppHeader({ user, setUser }: AppHeaderProps) {
 
   const handleLogout = async () => {
     try {
-      // Call server logout API to revoke session and tokens
-      const token = localStorage.getItem('token');
-      const sessionId = localStorage.getItem('session_id');
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json'
-      };
-      
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-      if (sessionId) {
-        headers['X-Session-Id'] = sessionId;
-      }
-
-      await fetch('/api/auth/logout', {
+      await authFetch('/api/auth/logout', {
         method: 'POST',
-        headers
+        headers: { 'Content-Type': 'application/json' }
       });
     } catch (error) {
       console.error('Logout API error:', error);
-      // Continue with local logout even if API fails
     } finally {
-      // Clear local storage
       localStorage.removeItem('token');
       localStorage.removeItem('refresh_token');
       localStorage.removeItem('session_id');

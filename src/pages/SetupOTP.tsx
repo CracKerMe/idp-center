@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { ShieldCheck } from 'lucide-react';
 import AppHeader from '../components/AppHeader';
+import { authFetch } from '../utils/fetch';
 
 export default function SetupOTP({ user, setUser }: { user: any, setUser: (user: any) => void }) {
   const [qrCode, setQrCode] = useState('');
@@ -11,9 +12,8 @@ export default function SetupOTP({ user, setUser }: { user: any, setUser: (user:
   const navigate = useNavigate();
 
   useEffect(() => {
-    fetch('/api/auth/otp/setup', {
+    authFetch('/api/auth/otp/setup', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
     })
     .then(res => res.json())
     .then(data => {
@@ -26,12 +26,9 @@ export default function SetupOTP({ user, setUser }: { user: any, setUser: (user:
     e.preventDefault();
     setError('');
 
-    const res = await fetch('/api/auth/otp/verify', {
+    const res = await authFetch('/api/auth/otp/verify', {
       method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${localStorage.getItem('token')}`
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token })
     });
 

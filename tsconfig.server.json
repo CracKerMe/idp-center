@@ -13,5 +13,5 @@
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": ["server.ts", "better-sqlite3.d.ts"]
+  "include": ["server.ts", "better-sqlite3.d.ts", "server/**/*.ts"]
 }

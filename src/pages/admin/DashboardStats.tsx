@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Users, Building, Key, Activity, Clock, TrendingUp, LogIn, UserPlus } from 'lucide-react';
 import { motion } from 'motion/react';
+import { authFetch } from '../../utils/fetch';
 
 interface Stats {
   users: number;
@@ -25,11 +26,8 @@ export default function DashboardStats() {
   }, []);
 
   const fetchStats = async () => {
-    const token = localStorage.getItem('token');
     try {
-      const res = await fetch('/api/admin/stats', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await authFetch('/api/admin/stats');
       if (res.ok) {
         const data = await res.json();
         setStats(data);
