@@ -1,0 +1,39 @@
+{
+  "id": "user_registration",
+  "name": "新用户注册处理流程",
+  "version": "1.0.0",
+  "startNode": "welcome-email",
+  "nodes": {
+    "welcome-email": {
+      "id": "welcome-email",
+      "type": "action",
+      "action": "async (instance) => { const { username, email } = instance.context; console.log(`[Workflow] 正在发送欢迎邮件给 ${username} (${email})`); await new Promise(r => setTimeout(r, 1000)); console.log(`[Workflow] 欢迎邮件已发送`); return { emailSent: true }; }",
+      "next": ["init-user-workspace"]
+    },
+    "init-user-workspace": {
+      "id": "init-user-workspace",
+      "type": "action",
+      "action": "async (instance) => { const { userId } = instance.context; console.log(`[Workflow] 正在初始化企业级工作区 for ${userId}`); await new Promise(r => setTimeout(r, 1500)); return { workspaceId: 'ws-' + userId }; }",
+      "next": ["notify-idp-status"]
+    },
+    "notify-idp-status": {
+      "id": "notify-idp-status",
+      "type": "http",
+      "config": {
+        "url": "${env.IDP_URL}/api/admin/users",
+        "method": "GET",
+        "headers": {
+          "Authorization": "Bearer ${env.IDP_ADMIN_JWT}",
+          "Content-Type": "application/json"
+        }
+      },
+      "next": ["complete-audit"]
+    },
+    "complete-audit": {
+      "id": "complete-audit",
+      "type": "action",
+      "action": "async (instance) => { const idpUsers = typeof instance.state.nodes['notify-idp-status']?.output?.data === 'string' ? JSON.parse(instance.state.nodes['notify-idp-status'].output.data) : instance.state.nodes['notify-idp-status']?.output?.data; console.log(`[Workflow] IDP Center 用户数据查询完成，当前系统共有 ${idpUsers?.length || 0} 名用户`); console.log(`[Workflow] 注册后续流程处理完毕`); return { success: true }; }",
+      "next": []
+    }
+  }
+}

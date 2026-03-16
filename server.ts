@@ -8,6 +8,7 @@ import qrcode from 'qrcode';
 import crypto from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -172,8 +173,108 @@ if (!clientExists) {
   );
 }
 
-const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-jwt-key-change-in-prod';
+const JWT_SECRET = process.env.JWT_SECRET || 'idp-center-shared-secret-key-for-ts-runit-integration';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'super-secret-refresh-key-change-in-prod';
+
+// TS-RunIt Workflow Engine Integration
+const WORKFLOW_ENGINE_URL = process.env.WORKFLOW_ENGINE_URL || 'http://localhost:3345/workflow-api/v1';
+
+/**
+ * Helper to trigger a ts-runit workflow
+ * Uses the system admin JWT token to authenticate with the workflow engine
+ */
+async function triggerWorkflow(workflowId: string, payload: any, req?: express.Request) {
+  try {
+    // Generate a short-lived system token for workflow invocation
+    const systemToken = jwt.sign(
+      { id: 'system', username: 'system_admin', is_admin: 1, tenant_id: 'default' },
+      JWT_SECRET,
+      { expiresIn: '5m' }
+    );
+
+    const response = await fetch(`${WORKFLOW_ENGINE_URL}/instances`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${systemToken}`
+      },
+      body: JSON.stringify({
+        workflowId,
+        input: payload
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`Status ${response.status} failed to trigger workflow ${workflowId}:`, errorText);
+      return null;
+    }
+
+    const data = await response.json();
+    console.log(`Successfully triggered workflow ${workflowId}, instance ID: ${data.data?.instanceId}`);
+    
+    // Log audit if request context is provided
+    if (req) {
+      logAudit('system', 'TRIGGER_WORKFLOW', req, `Triggered ${workflowId} instance ${data.data?.instanceId}`);
+    }
+    
+    return data;
+  } catch (error) {
+    console.error(`Error triggering workflow ${workflowId}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Auto-registers all workflows from the 'workflows/' directory to the ts-runit engine
+ */
+async function registerWorkflows() {
+  const workflowsDir = path.join(__dirname, 'workflows');
+  if (!fs.existsSync(workflowsDir)) return;
+
+  const files = fs.readdirSync(workflowsDir).filter(f => f.endsWith('.json'));
+  if (files.length === 0) return;
+
+  console.log(`[Startup] Found ${files.length} workflow definition(s) to register...`);
+
+  const systemToken = jwt.sign(
+    { id: 'system', username: 'system_admin', is_admin: 1, tenant_id: 'default' },
+    JWT_SECRET,
+    { expiresIn: '5m' }
+  );
+
+  for (const file of files) {
+    try {
+      const content = fs.readFileSync(path.join(workflowsDir, file), 'utf-8');
+      const workflowData = JSON.parse(content);
+      
+      const response = await fetch(`${WORKFLOW_ENGINE_URL}/workflows`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${systemToken}`
+        },
+        body: JSON.stringify({
+          id: workflowData.id,
+          name: workflowData.name,
+          definition: workflowData,
+          options: {
+            setActive: true
+          }
+        })
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error(`[Startup] Failed to register workflow ${workflowData.id}:`, errText);
+      } else {
+        console.log(`[Startup] Successfully registered workflow: ${workflowData.id} v${workflowData.version}`);
+      }
+    } catch (err) {
+      console.error(`[Startup] Error registering workflow from ${file}:`, err);
+    }
+  }
+}
 
 // Password strength validation
 interface PasswordStrength {
@@ -264,6 +365,10 @@ app.post('/api/auth/register', (req, res) => {
     const id = crypto.randomUUID();
     db.prepare('INSERT INTO users (id, username, email, password_hash) VALUES (?, ?, ?, ?)').run(id, username, email, hash);
     logAudit(id, 'REGISTER', req, `Registered ${username}`);
+
+    // Trigger user registration workflow
+    triggerWorkflow('user_registration', { userId: id, username, email }, req);
+
     res.json({ message: 'User registered successfully' });
   } catch (err: any) {
     res.status(400).json({ error: 'Username or email already exists' });
@@ -994,8 +1099,10 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  app.listen(PORT, '0.0.0.0', async () => {
     console.log(`Server running on http://localhost:${PORT}`);
+    // Register workflows with ts-runit background engine
+    await registerWorkflows();
   });
 }
 
