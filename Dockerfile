@@ -50,7 +50,7 @@ WORKDIR /app
 COPY --chown=nonroot:nonroot package.json ./
 COPY --chown=nonroot:nonroot --from=builder /app/node_modules ./node_modules
 COPY --chown=nonroot:nonroot --from=builder /app/dist ./dist
-COPY --chown=nonroot:nonroot --from=builder /app/build/server.js ./server.js
+COPY --chown=nonroot:nonroot --from=builder /app/build ./build
 
 # 复制数据库文件
 COPY --chown=nonroot:nonroot auth.db ./auth.db
@@ -66,4 +66,4 @@ EXPOSE 5986
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 CMD ["/nodejs/bin/node", "-e", "require('http').get('http://127.0.0.1:5986/api/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
 
 # 启动应用
-CMD ["server.js"]
+CMD ["build/server.js"]
