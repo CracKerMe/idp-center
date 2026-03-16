@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import express from 'express';
-import { db } from '../database';
+import { db } from '../database.js';
 
 export function logAudit(
   userId: string | null,

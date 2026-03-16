@@ -1,11 +1,11 @@
 import express from 'express';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
-import { db } from '../database';
-import { logAudit } from '../utils/audit';
-import { emailService } from '../services/email.service';
-import { cleanupExpiredTokens } from '../utils/cleanup';
-import { authenticateAdmin } from '../middleware/auth';
+import { db } from '../database.js';
+import { logAudit } from '../utils/audit.js';
+import { emailService } from '../services/email.service.js';
+import { cleanupExpiredTokens } from '../utils/cleanup.js';
+import { authenticateAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
 

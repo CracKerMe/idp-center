@@ -3,16 +3,16 @@ import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { config, rootDir } from './server/config';
+import { config, rootDir } from './server/config.js';
 // Side-effect: initialises DB schema, migrations and seeds
-import './server/database';
-import { cleanupExpiredTokens } from './server/utils/cleanup';
-import authRouter from './server/routes/auth';
-import oidcRouter from './server/routes/oidc';
-import userRouter from './server/routes/user';
-import adminRouter from './server/routes/admin';
-import githubRouter from './server/routes/github';
-import { db } from './server/database';
+import './server/database.js';
+import { cleanupExpiredTokens } from './server/utils/cleanup.js';
+import authRouter from './server/routes/auth.js';
+import oidcRouter from './server/routes/oidc.js';
+import userRouter from './server/routes/user.js';
+import adminRouter from './server/routes/admin.js';
+import githubRouter from './server/routes/github.js';
+import { db } from './server/database.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();

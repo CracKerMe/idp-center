@@ -4,12 +4,12 @@ import bcrypt from 'bcryptjs';
 import { authenticator } from 'otplib';
 import qrcode from 'qrcode';
 import jwt from 'jsonwebtoken';
-import { db } from '../database';
-import { config, SECURITY_CONFIG } from '../config';
-import { emailService } from '../services/email.service';
-import { logAudit } from '../utils/audit';
-import { validatePasswordStrength } from '../utils/password';
-import { authenticateToken } from '../middleware/auth';
+import { db } from '../database.js';
+import { config, SECURITY_CONFIG } from '../config.js';
+import { emailService } from '../services/email.service.js';
+import { logAudit } from '../utils/audit.js';
+import { validatePasswordStrength } from '../utils/password.js';
+import { authenticateToken } from '../middleware/auth.js';
 
 const router = express.Router();
 

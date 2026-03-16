@@ -3,12 +3,12 @@ import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import multer from 'multer';
 import path from 'path';
-import { db } from '../database';
-import { config, rootDir } from '../config';
-import { logAudit } from '../utils/audit';
-import { validatePasswordStrength } from '../utils/password';
-import { emailService } from '../services/email.service';
-import { authenticateToken } from '../middleware/auth';
+import { db } from '../database.js';
+import { config, rootDir } from '../config.js';
+import { logAudit } from '../utils/audit.js';
+import { validatePasswordStrength } from '../utils/password.js';
+import { emailService } from '../services/email.service.js';
+import { authenticateToken } from '../middleware/auth.js';
 
 const router = express.Router();
 

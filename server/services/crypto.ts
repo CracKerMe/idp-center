@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { config } from '../config';
+import { config } from '../config.js';
 
 /** Derive a 32-byte AES key from ENCRYPTION_KEY env var (or JWT_SECRET as fallback). */
 export function getEncryptionKey(): Buffer {

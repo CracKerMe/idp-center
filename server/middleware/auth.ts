@@ -1,7 +1,7 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
-import { db } from '../database';
-import { config } from '../config';
+import { db } from '../database.js';
+import { config } from '../config.js';
 
 export function authenticateToken(
   req: express.Request,

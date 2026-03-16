@@ -1,10 +1,10 @@
 import express from 'express';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
-import { db } from '../database';
-import { config } from '../config';
-import { logAudit } from '../utils/audit';
-import { authenticateToken } from '../middleware/auth';
+import { db } from '../database.js';
+import { config } from '../config.js';
+import { logAudit } from '../utils/audit.js';
+import { authenticateToken } from '../middleware/auth.js';
 
 const router = express.Router();
 

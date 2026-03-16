@@ -1,6 +1,6 @@
 import nodemailer from 'nodemailer';
-import { config } from '../config';
-import { verificationEmail, passwordResetEmail, accountDeletionEmail } from '../../email-templates';
+import { config } from '../config.js';
+import { verificationEmail, passwordResetEmail, accountDeletionEmail } from '../../email-templates.js';
 
 export class EmailService {
   private transporter!: nodemailer.Transporter;
