@@ -4,12 +4,14 @@
  */
 
 import { useState, useEffect } from 'react';
-import { createRouter, RouterProvider } from '@tanstack/react-router';
+import { createRouter, RouterProvider, createHashHistory } from '@tanstack/react-router';
 import { routeTree } from './routeTree.gen';
 import { authFetch } from './utils/fetch';
 
+const hashHistory = createHashHistory();
 const router = createRouter({ 
   routeTree,
+  history: hashHistory,
   context: { user: null, setUser: () => {} }
 });
 
@@ -31,8 +33,8 @@ export default function App() {
 
     const init = async () => {
       if (githubCode) {
-        // Clean up URL immediately
-        window.history.replaceState({}, '', window.location.pathname);
+        // Clean up URL immediately (hash mode: keep hash, remove query params)
+        window.history.replaceState({}, '', window.location.pathname + window.location.hash.split('?')[0]);
         try {
           const exchangeRes = await fetch('/api/auth/github/exchange', {
             method: 'POST',
@@ -61,7 +63,8 @@ export default function App() {
       if (accessToken) {
         localStorage.setItem('token', accessToken);
         if (refreshToken) localStorage.setItem('refresh_token', refreshToken);
-        window.history.replaceState({}, '', window.location.pathname);
+        // Hash mode: clean query params, keep hash
+        window.history.replaceState({}, '', window.location.pathname + window.location.hash.split('?')[0]);
       }
 
       const token = localStorage.getItem('token');

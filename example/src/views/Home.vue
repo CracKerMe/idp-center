@@ -54,7 +54,7 @@ function startOAuthFlow() {
     state: state
   })
   
-  window.location.href = `http://localhost:5986/authorize?${params.toString()}`
+  window.location.href = `http://localhost:5986/#/authorize?${params.toString()}`
 }
 
 function goToDashboard() {

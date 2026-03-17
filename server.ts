@@ -53,10 +53,8 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
+    // Hash mode: serve static files only, no SPA fallback needed
     app.use(express.static('dist'));
-    app.get('*', (req, res) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
-    });
   }
 
   app.listen(config.PORT, '0.0.0.0', () => {

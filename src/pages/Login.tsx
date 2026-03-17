@@ -67,7 +67,8 @@ export default function Login({ setUser }: { setUser: (user: any) => void }) {
       setUser(data.user);
       const redirect = searchParams.redirect;
       if (redirect && typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//')) {
-        window.location.href = redirect;
+        // Hash mode: navigate using hash
+        window.location.href = '/#' + redirect;
       } else {
         navigate({ to: '/' });
       }

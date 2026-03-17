@@ -54,9 +54,9 @@ function clearAuthAndRedirect(): void {
   localStorage.removeItem('refresh_token');
   localStorage.removeItem('session_id');
   
-  // Only redirect if not already on login page
-  if (window.location.pathname !== '/login') {
-    window.location.href = '/login';
+  // Hash mode: redirect to /#/login
+  if (!window.location.hash.startsWith('#/login')) {
+    window.location.href = '/#/login';
   }
 }
 

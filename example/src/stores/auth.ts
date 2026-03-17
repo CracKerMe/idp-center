@@ -245,8 +245,8 @@ export const useAuthStore = defineStore('auth', () => {
       state: state || generateRandomState()
     })
 
-    // Redirect to IDP Center's authorization page
-    window.location.href = `http://localhost:5986/authorize?${params.toString()}`
+    // Redirect to IDP Center's authorization page (hash mode)
+    window.location.href = `http://localhost:5986/#/authorize?${params.toString()}`
   }
 
   // OAuth2 Authorization Code Flow - Step 2: Exchange code for token
