@@ -32,28 +32,43 @@ const features = [
   }
 ]
 
-function startOAuthFlow() {
+function safeReturnTo(returnTo: string | undefined, fallback = '/dashboard') {
+  if (!returnTo) return fallback
+  if (!returnTo.startsWith('/')) return fallback
+  if (returnTo.startsWith('//')) return fallback
+  if (returnTo.includes('://')) return fallback
+  return returnTo
+}
+
+function generateNonce() {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID()
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('')
+}
+
+function startOAuthFlow(returnTo?: string) {
   // OAuth2 configuration
   const clientId = 'default-client'
   const redirectUri = 'http://localhost:3000/callback'
-  
-  // Generate random state for CSRF protection
-  const state = Array.from(crypto.getRandomValues(new Uint8Array(16)))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('')
-  
-  // Save state for verification
-  localStorage.setItem('oauth_state', state)
-  
+
+  const nonce = generateNonce()
+  const resolvedReturnTo = safeReturnTo(returnTo ?? router.currentRoute.value.fullPath)
+
+  sessionStorage.setItem(
+    `oauth_state:${nonce}`,
+    JSON.stringify({ nonce, return_to: resolvedReturnTo, iat: Date.now() })
+  )
+
   // Redirect to IDP Center's authorization endpoint
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: 'code',
     scope: 'openid profile email',
-    state: state
+    state: nonce
   })
-  
+
   window.location.href = `http://localhost:5986/#/authorize?${params.toString()}`
 }
 

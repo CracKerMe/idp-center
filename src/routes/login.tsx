@@ -8,8 +8,14 @@ export const Route = createFileRoute('/login')({
       error: search.error as string | undefined,
     };
   },
-  beforeLoad: ({ context }) => {
-    if (context.user) throw redirect({ to: '/' });
+  beforeLoad: ({ context, search }) => {
+    if (context.user) {
+      const redirectTo = search.redirect;
+      if (redirectTo && typeof redirectTo === 'string' && redirectTo.startsWith('/') && !redirectTo.startsWith('//')) {
+        throw redirect({ to: redirectTo as any });
+      }
+      throw redirect({ to: '/' });
+    }
   },
   component: function LoginComponent() {
     const { setUser } = Route.useRouteContext();

@@ -10,55 +10,74 @@ const authStore = useAuthStore()
 const error = ref('')
 const loading = ref(true)
 
+function safeReturnTo(returnTo: string | undefined, fallback = '/dashboard') {
+  if (!returnTo) return fallback
+  if (!returnTo.startsWith('/')) return fallback
+  if (returnTo.startsWith('//')) return fallback
+  if (returnTo.includes('://')) return fallback
+  return returnTo
+}
+
 onMounted(async () => {
   const code = route.query.code as string
-  const state = route.query.state as string
+  const nonce = route.query.state as string
   const errorParam = route.query.error as string
-  
+
   // Check for OAuth errors
   if (errorParam) {
-    error.value = route.query.error_description as string || errorParam
+    error.value = (route.query.error_description as string) || errorParam
     loading.value = false
     return
   }
-  
-  // Verify state to prevent CSRF
-  const savedState = localStorage.getItem('oauth_state')
-  if (state && savedState && state !== savedState) {
-    error.value = 'Invalid state parameter. Possible CSRF attack.'
+
+  if (!nonce) {
+    error.value = 'Missing state parameter'
     loading.value = false
     return
   }
-  
-  // Clear the saved state
-  localStorage.removeItem('oauth_state')
-  
+
+  const storageKey = `oauth_state:${nonce}`
+  const saved = sessionStorage.getItem(storageKey)
+  sessionStorage.removeItem(storageKey)
+
+  if (!saved) {
+    error.value = 'Invalid or expired state parameter.'
+    loading.value = false
+    return
+  }
+
+  let record: { nonce: string; return_to?: string; iat: number } | null = null
+  try {
+    record = JSON.parse(saved)
+  } catch {
+    error.value = 'Invalid or expired state parameter.'
+    loading.value = false
+    return
+  }
+
+  const ttlMs = 10 * 60 * 1000
+  if (!record || record.nonce !== nonce || Date.now() - record.iat > ttlMs) {
+    error.value = 'Invalid or expired state parameter.'
+    loading.value = false
+    return
+  }
+
   // Exchange code for token
   if (!code) {
     error.value = 'No authorization code received'
     loading.value = false
     return
   }
-  
+
   try {
     // OAuth2 client configuration
     const clientId = 'default-client'
     const clientSecret = 'secret123'
     const redirectUri = 'http://localhost:3000/callback'
-    
-    const tokenData = await authStore.exchangeCodeForToken(code, clientId, clientSecret, redirectUri)
-    
-    // Save tokens and user info
-    if (tokenData.access_token) {
-      localStorage.setItem('token', tokenData.access_token)
-    }
-    
-    if (tokenData.refresh_token) {
-      localStorage.setItem('refresh_token', tokenData.refresh_token)
-    }
-    
-    // Redirect to dashboard
-    router.push('/dashboard')
+
+    await authStore.exchangeCodeForToken(code, clientId, clientSecret, redirectUri)
+
+    router.replace(safeReturnTo(record.return_to))
   } catch (err: any) {
     console.error('OAuth callback error:', err)
     error.value = err.message || 'Failed to exchange authorization code'

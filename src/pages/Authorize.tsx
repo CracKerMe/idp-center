@@ -107,7 +107,9 @@ export default function Authorize({ user }: { user: any }) {
             </div>
 
             <p className="mt-4 text-xs text-zinc-500">
-              Signed in as <strong className="text-zinc-900">{user.username}</strong> ({user.email}).
+              Signed in as{' '}
+              <strong className="text-zinc-900">{user?.username ?? 'Guest'}</strong>
+              {user?.email ? ` (${user.email}).` : '.'}
             </p>
 
             <div className="mt-6 flex gap-4">

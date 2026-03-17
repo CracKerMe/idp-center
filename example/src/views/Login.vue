@@ -14,13 +14,56 @@ const requireOtp = ref(false)
 const error = ref('')
 const loading = ref(false)
 
+function safeReturnTo(returnTo: string | undefined, fallback = '/dashboard') {
+  if (!returnTo) return fallback
+  if (!returnTo.startsWith('/')) return fallback
+  if (returnTo.startsWith('//')) return fallback
+  if (returnTo.includes('://')) return fallback
+  return returnTo
+}
+
+function generateNonce() {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID()
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('')
+}
+
+function startOAuthFlow(returnTo?: string) {
+  const clientId = 'default-client'
+  const redirectUri = 'http://localhost:3000/callback'
+
+  const nonce = generateNonce()
+  const resolvedReturnTo = safeReturnTo(returnTo)
+
+  sessionStorage.setItem(
+    `oauth_state:${nonce}`,
+    JSON.stringify({ nonce, return_to: resolvedReturnTo, iat: Date.now() })
+  )
+
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    response_type: 'code',
+    scope: 'openid profile email',
+    state: nonce
+  })
+
+  window.location.href = `http://localhost:5986/#/authorize?${params.toString()}`
+}
+
+function handleOAuthLogin() {
+  const redirect = route.query.redirect as string
+  startOAuthFlow(redirect)
+}
+
 async function handleSubmit() {
   error.value = ''
   loading.value = true
-  
+
   try {
     const success = await authStore.login(username.value, password.value, otp.value || undefined)
-    
+
     if (success) {
       console.log('Login successful, redirecting...')
       const redirect = route.query.redirect as string
@@ -95,7 +138,18 @@ async function handleSubmit() {
           {{ loading ? 'Signing in...' : 'Sign In' }}
         </button>
       </form>
-      
+
+      <div style="margin-top: 1rem;">
+        <button
+          type="button"
+          class="btn btn-secondary"
+          style="width: 100%;"
+          @click="handleOAuthLogin"
+        >
+          Login with OAuth
+        </button>
+      </div>
+
       <div style="margin-top: 1.5rem; text-align: center; color: #6b7280;">
         <p style="margin-bottom: 0.5rem;">
           Don't have an account?
