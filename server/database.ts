@@ -136,6 +136,8 @@ const migrations = [
   { table: 'auth_codes', column: 'code_challenge', sql: 'ALTER TABLE auth_codes ADD COLUMN code_challenge TEXT' },
   { table: 'auth_codes', column: 'code_challenge_method', sql: "ALTER TABLE auth_codes ADD COLUMN code_challenge_method TEXT DEFAULT 'S256'" },
   { table: 'access_tokens', column: 'scope', sql: "ALTER TABLE access_tokens ADD COLUMN scope TEXT DEFAULT 'openid'" },
+  { table: 'access_tokens', column: 'revoked_at', sql: 'ALTER TABLE access_tokens ADD COLUMN revoked_at DATETIME' },
+  { table: 'access_tokens', column: 'revoke_reason', sql: 'ALTER TABLE access_tokens ADD COLUMN revoke_reason TEXT' },
 ];
 
 for (const migration of migrations) {

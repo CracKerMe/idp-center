@@ -6,6 +6,7 @@ import { db } from '../database.js';
 import { config } from '../config.js';
 import { logAudit } from '../utils/audit.js';
 import { encryptToken, generateOAuthState } from '../services/crypto.js';
+import { success, error, ErrorCode } from '../utils/response.js';
 
 const router = express.Router();
 
@@ -117,7 +118,7 @@ function findOrCreateUserFromGitHub(identity: GitHubIdentity, accessToken: strin
 // GET /api/auth/github/config
 router.get('/config', (req, res) => {
   const enabled = !!(config.GITHUB_CLIENT_ID && config.GITHUB_CLIENT_SECRET);
-  res.json({ enabled });
+  res.json(success({ enabled }));
 });
 
 // GET /api/auth/github — initiate authorization
@@ -126,7 +127,7 @@ router.get('/', (req, res) => {
   const clientSecret = config.GITHUB_CLIENT_SECRET;
 
   if (!clientId || !clientSecret) {
-    return res.status(503).json({ error: 'GitHub OAuth is not configured', code: 'GITHUB_NOT_CONFIGURED' });
+    return res.status(503).json(error('GitHub OAuth is not configured', ErrorCode.SERVICE_UNAVAILABLE));
   }
 
   const callbackUrl = config.GITHUB_CALLBACK_URL || 'http://localhost:5986/api/auth/github/callback';
@@ -166,7 +167,7 @@ router.get('/callback', async (req, res) => {
 
   if (!stateRecord || new Date(stateRecord.expires_at) < new Date()) {
     if (stateRecord) db.prepare('DELETE FROM oauth_states WHERE state = ?').run(state);
-    return res.status(400).json({ error: 'Invalid or expired OAuth state' });
+    return res.status(400).json(error('Invalid or expired OAuth state', ErrorCode.TOKEN_INVALID));
   }
 
   db.prepare('DELETE FROM oauth_states WHERE state = ?').run(state);
@@ -235,28 +236,28 @@ router.get('/callback', async (req, res) => {
 // POST /api/auth/github/exchange
 router.post('/exchange', (req, res) => {
   const { code } = req.body;
-  if (!code) return res.status(400).json({ error: 'Code required' });
+  if (!code) return res.status(400).json(error('Code required', ErrorCode.VALIDATION_REQUIRED));
 
   const authCode: any = db.prepare("SELECT * FROM auth_codes WHERE code = ? AND client_id = 'github-oauth' AND scope = 'github_login'").get(code);
-  if (!authCode) return res.status(401).json({ error: 'Invalid code' });
+  if (!authCode) return res.status(401).json(error('Invalid code', ErrorCode.TOKEN_INVALID));
 
   db.prepare('DELETE FROM auth_codes WHERE id = ?').run(authCode.id);
 
-  if (new Date(authCode.expires_at) < new Date()) return res.status(401).json({ error: 'Code expired' });
+  if (new Date(authCode.expires_at) < new Date()) return res.status(401).json(error('Code expired', ErrorCode.TOKEN_EXPIRED));
 
   const accessToken: any = db.prepare("SELECT token FROM access_tokens WHERE user_id = ? AND revoked = 0 ORDER BY created_at DESC LIMIT 1").get(authCode.user_id);
   const refreshToken: any = db.prepare("SELECT token FROM refresh_tokens WHERE user_id = ? AND revoked = 0 ORDER BY created_at DESC LIMIT 1").get(authCode.user_id);
 
-  if (!accessToken || !refreshToken) return res.status(500).json({ error: 'Token generation failed' });
+  if (!accessToken || !refreshToken) return res.status(500).json(error('Token generation failed', ErrorCode.SERVER_ERROR));
 
   const user: any = db.prepare('SELECT id, username, email, is_admin, otp_enabled, tenant_id FROM users WHERE id = ?').get(authCode.user_id);
 
-  res.json({
+  res.json(success({
     access_token: accessToken.token,
     refresh_token: refreshToken.token,
     token_type: 'Bearer',
     user,
-  });
+  }));
 });
 
 export default router;

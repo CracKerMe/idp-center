@@ -23,9 +23,9 @@ export default function Authorize({ user }: { user: any }) {
 
     fetch(`/api/oidc/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=${responseType}&state=${state}&scope=${scope}`)
       .then(res => res.json())
-      .then(data => {
-        if (data.error) setError(data.error);
-        else setClientInfo(data);
+      .then(result => {
+        if (result.error) setError(result.error);
+        else setClientInfo(result.data || result);
       });
   }, [clientId, redirectUri, responseType, state, scope]);
 
@@ -53,7 +53,7 @@ export default function Authorize({ user }: { user: any }) {
       })
     });
 
-    const data = await res.json();
+    const { data } = await res.json();
     if (res.ok && data.redirect_url) {
       window.location.href = data.redirect_url;
     } else {

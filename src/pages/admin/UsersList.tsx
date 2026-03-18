@@ -68,8 +68,8 @@ export default function UsersList() {
       setEditingUser(null);
       fetchUsers();
     } else {
-      const data = await res.json();
-      setActionError(data.error || 'Failed to update user');
+      const result = await res.json();
+      setActionError(result.error || 'Failed to update user');
     }
   };
 

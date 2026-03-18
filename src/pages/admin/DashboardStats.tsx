@@ -29,8 +29,8 @@ export default function DashboardStats() {
     try {
       const res = await authFetch('/api/admin/stats');
       if (res.ok) {
-        const data = await res.json();
-        setStats(data);
+        const result = await res.json();
+        setStats(result.data || result);
       }
     } catch (err) {
       console.error('Failed to fetch stats');

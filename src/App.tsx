@@ -21,6 +21,30 @@ declare module '@tanstack/react-router' {
   }
 }
 
+// Initialize theme before rendering to prevent flash
+function initializeTheme() {
+  const stored = localStorage.getItem('idp-theme');
+  const theme = stored === 'light' || stored === 'dark' || stored === 'system' ? stored : 'system';
+  
+  let resolved: 'light' | 'dark';
+  if (theme === 'system') {
+    resolved = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  } else {
+    resolved = theme;
+  }
+  
+  if (resolved === 'dark') {
+    document.documentElement.classList.add('dark');
+  } else {
+    document.documentElement.classList.remove('dark');
+  }
+}
+
+// Run theme initialization immediately
+if (typeof window !== 'undefined') {
+  initializeTheme();
+}
+
 export default function App() {
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -42,7 +66,8 @@ export default function App() {
             body: JSON.stringify({ code: githubCode })
           });
           if (exchangeRes.ok) {
-            const data = await exchangeRes.json();
+            const result = await exchangeRes.json();
+            const data = result.data || result;
             localStorage.setItem('token', data.access_token);
             localStorage.setItem('refresh_token', data.refresh_token);
             if (sessionId) localStorage.setItem('session_id', sessionId);
@@ -78,7 +103,7 @@ export default function App() {
             setUser(null);
           } else if (res.ok) {
             const data = await res.json();
-            if (data) setUser(data);
+            if (data) setUser(data.data || data);
           }
         } catch {
           // ignore
@@ -90,7 +115,11 @@ export default function App() {
     init();
   }, []);
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
+  if (loading) return (
+    <div className="min-h-screen flex items-center justify-center bg-white dark:bg-zinc-900">
+      <div className="text-zinc-600 dark:text-zinc-300">Loading...</div>
+    </div>
+  );
 
   return <RouterProvider router={router} context={{ user, setUser }} />;
 }

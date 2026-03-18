@@ -10,6 +10,21 @@ import { emailService } from '../services/email.service.js';
 import { logAudit } from '../utils/audit.js';
 import { validatePasswordStrength } from '../utils/password.js';
 import { authenticateToken } from '../middleware/auth.js';
+import { validate } from '../middleware/validate.js';
+import { success, error, message, ErrorCode } from '../utils/response.js';
+import { revokeToken, revokeAllUserTokens, RevokeReason } from '../utils/token-blacklist.js';
+import {
+  registerSchema,
+  loginSchema,
+  otpVerifySchema,
+  emailVerifySchema,
+  emailResendPublicSchema,
+  passwordResetRequestSchema,
+  passwordResetVerifySchema,
+  passwordResetSchema,
+  tokenRefreshSchema,
+  passwordValidateSchema,
+} from '../validators/auth.validator.js';
 
 const router = express.Router();
 
@@ -19,12 +34,15 @@ function computeDeviceFingerprint(userAgent: string, ip: string): string {
 }
 
 // POST /api/auth/register
-router.post('/register', (req, res) => {
+router.post('/register', validate({ body: registerSchema }), (req, res) => {
   const { username, email, password } = req.body;
 
   const strength = validatePasswordStrength(password);
   if (!strength.valid) {
-    return res.status(400).json({ error: 'Password too weak', errors: strength.errors });
+    return res.status(400).json({
+      ...error('Password does not meet requirements', ErrorCode.VALIDATION_PASSWORD_WEAK),
+      details: strength.errors,
+    });
   }
 
   try {
@@ -42,31 +60,34 @@ router.post('/register', (req, res) => {
       console.error('Failed to send verification email:', err);
     });
 
-    res.json({ message: 'User registered successfully' });
+    res.json(message('User registered successfully'));
   } catch (err: any) {
-    res.status(400).json({ error: 'Username or email already exists' });
+    res.status(400).json(error('Username or email already exists', ErrorCode.RESOURCE_ALREADY_EXISTS));
   }
 });
 
 // POST /api/auth/login
-router.post('/login', (req, res) => {
+router.post('/login', validate({ body: loginSchema }), (req, res) => {
   const { username, password, otp, remember_me, trust_device } = req.body;
   const user: any = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
 
   if (!user) {
     logAudit(null, 'LOGIN_FAILED', req, `Failed login for ${username}`);
-    return res.status(401).json({ error: 'Invalid credentials' });
+    return res.status(401).json(error('Invalid credentials', ErrorCode.AUTH_INVALID_CREDENTIALS));
   }
 
   if (!user.is_active) {
     logAudit(user.id, 'LOGIN_FAILED', req, `Banned user attempted login: ${username}`);
-    return res.status(403).json({ error: 'ACCOUNT_DISABLED' });
+    return res.status(403).json(error('Account is disabled', ErrorCode.ACCOUNT_DISABLED));
   }
 
   if (user.locked_until) {
     const lockExpiry = new Date(user.locked_until);
     if (lockExpiry > new Date()) {
-      return res.status(401).json({ error: 'ACCOUNT_LOCKED', unlock_at: lockExpiry.toISOString() });
+      return res.status(401).json({
+        ...error('Account is locked', ErrorCode.ACCOUNT_LOCKED),
+        data: { unlock_at: lockExpiry.toISOString() },
+      });
     }
   }
 
@@ -79,7 +100,7 @@ router.post('/login', (req, res) => {
       db.prepare('UPDATE users SET failed_login_attempts = ? WHERE id = ?').run(newAttempts, user.id);
     }
     logAudit(user.id, 'LOGIN_FAILED', req, `Failed login for ${username}`);
-    return res.status(401).json({ error: 'Invalid credentials' });
+    return res.status(401).json(error('Invalid credentials', ErrorCode.AUTH_INVALID_CREDENTIALS));
   }
 
   db.prepare('UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = ?').run(user.id);
@@ -100,25 +121,28 @@ router.post('/login', (req, res) => {
       deviceTrusted = true;
     } else {
       if (!otp) {
-        return res.status(403).json({ error: 'OTP required', requireOtp: true });
+        return res.status(403).json({
+          ...error('OTP required', ErrorCode.AUTH_OTP_REQUIRED),
+          data: { requireOtp: true },
+        });
       }
       const isValid = authenticator.check(otp, user.otp_secret);
       if (!isValid) {
         logAudit(user.id, 'LOGIN_FAILED_OTP', req, `Failed OTP for ${username}`);
-        return res.status(401).json({ error: 'Invalid OTP' });
+        return res.status(401).json(error('Invalid OTP', ErrorCode.AUTH_OTP_INVALID));
       }
     }
   }
 
   if (!user.email_verified && !user.is_admin) {
-    return res.status(403).json({ error: 'EMAIL_NOT_VERIFIED' });
+    return res.status(403).json(error('Email not verified', ErrorCode.ACCOUNT_NOT_VERIFIED));
   }
 
   const pendingDeletion: any = db.prepare(
     "SELECT id FROM account_deletion_requests WHERE user_id = ? AND status = 'pending'"
   ).get(user.id);
   if (pendingDeletion) {
-    return res.status(403).json({ error: 'ACCOUNT_PENDING_DELETION' });
+    return res.status(403).json(error('Account pending deletion', ErrorCode.ACCOUNT_PENDING_DELETION));
   }
 
   const accessToken = jwt.sign(
@@ -163,7 +187,7 @@ router.post('/login', (req, res) => {
 
   logAudit(user.id, 'LOGIN_SUCCESS', req, `Session: ${sessionId}`);
 
-  res.json({
+  res.json(success({
     access_token: accessToken,
     refresh_token: refreshToken,
     expires_in: 900,
@@ -178,21 +202,21 @@ router.post('/login', (req, res) => {
       tenant_id: user.tenant_id,
     },
     session_id: sessionId,
-  });
+  }, 'Login successful'));
 });
 
 // GET /api/auth/me
 router.get('/me', authenticateToken, (req, res) => {
   const user: any = db.prepare('SELECT id, username, email, full_name, phone, avatar_url, is_admin, otp_enabled FROM users WHERE id = ?').get((req as any).user.id);
-  if (!user) return res.sendStatus(404);
-  res.json(user);
+  if (!user) return res.status(404).json(error('User not found', ErrorCode.RESOURCE_NOT_FOUND));
+  res.json(success(user));
 });
 
 // POST /api/auth/logout
 router.post('/logout', authenticateToken, (req, res) => {
   const userId = (req as any).user.id;
   const sessionId = req.headers['x-session-id'];
-  const currentToken = req.headers['authorization']?.split(' ')[1];
+  const currentToken = (req as any).token;
 
   try {
     if (sessionId) {
@@ -203,14 +227,14 @@ router.post('/logout', authenticateToken, (req, res) => {
     }
 
     if (currentToken) {
-      db.prepare('UPDATE access_tokens SET revoked = 1 WHERE token = ? AND user_id = ?').run(currentToken, userId);
+      revokeToken(currentToken, RevokeReason.LOGOUT);
     }
 
     logAudit(userId, 'LOGOUT', req, sessionId ? `Session: ${sessionId}` : 'All sessions');
-    res.json({ message: 'Logged out successfully' });
+    res.json(message('Logged out successfully'));
   } catch (err: any) {
     console.error('Logout error:', err);
-    res.status(500).json({ error: 'Failed to logout' });
+    res.status(500).json(error('Failed to logout', ErrorCode.SERVER_ERROR));
   }
 });
 
@@ -220,7 +244,7 @@ router.post('/otp/setup', authenticateToken, async (req, res) => {
   const user: any = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
 
   if (user.otp_enabled) {
-    return res.status(400).json({ error: 'OTP is already enabled. Disable it first to reconfigure.' });
+    return res.status(400).json(error('OTP is already enabled. Disable it first to reconfigure.', ErrorCode.VALIDATION_FAILED));
   }
 
   const secret = authenticator.generateSecret();
@@ -228,11 +252,11 @@ router.post('/otp/setup', authenticateToken, async (req, res) => {
   db.prepare('UPDATE users SET otp_secret = ? WHERE id = ?').run(secret, userId);
 
   const qrCodeUrl = await qrcode.toDataURL(otpauth);
-  res.json({ secret, qrCodeUrl });
+  res.json(success({ secret, qrCodeUrl }));
 });
 
 // POST /api/auth/otp/verify
-router.post('/otp/verify', authenticateToken, (req, res) => {
+router.post('/otp/verify', authenticateToken, validate({ body: otpVerifySchema }), (req, res) => {
   const { token } = req.body;
   const userId = (req as any).user.id;
   const user: any = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
@@ -241,27 +265,22 @@ router.post('/otp/verify', authenticateToken, (req, res) => {
   if (isValid) {
     db.prepare('UPDATE users SET otp_enabled = 1 WHERE id = ?').run(userId);
     logAudit(userId, 'OTP_ENABLED', req);
-    res.json({ success: true });
+    res.json(success({ enabled: true }, 'OTP enabled successfully'));
   } else {
-    res.status(400).json({ error: 'Invalid OTP' });
+    res.status(400).json(error('Invalid OTP', ErrorCode.AUTH_OTP_INVALID));
   }
 });
 
 // POST /api/auth/password/validate
-router.post('/password/validate', (req, res) => {
+router.post('/password/validate', validate({ body: passwordValidateSchema }), (req, res) => {
   const { password } = req.body;
-  if (!password) {
-    return res.status(400).json({ error: 'Password is required' });
-  }
-  res.json(validatePasswordStrength(password));
+  const result = validatePasswordStrength(password);
+  res.json(success(result));
 });
 
 // POST /api/auth/email/verify
-router.post('/email/verify', (req, res) => {
+router.post('/email/verify', validate({ body: emailVerifySchema }), (req, res) => {
   const { token } = req.body;
-  if (!token) {
-    return res.status(400).json({ error: 'Token is required' });
-  }
 
   const now = new Date().toISOString();
   const record: any = db.prepare(
@@ -271,16 +290,16 @@ router.post('/email/verify', (req, res) => {
   if (!record) {
     const anyRecord: any = db.prepare('SELECT * FROM email_verifications WHERE token = ?').get(token);
     if (anyRecord && anyRecord.used) {
-      return res.status(400).json({ error: 'TOKEN_ALREADY_USED' });
+      return res.status(400).json(error('Token already used', ErrorCode.TOKEN_ALREADY_USED));
     }
-    return res.status(400).json({ error: 'TOKEN_EXPIRED_OR_INVALID' });
+    return res.status(400).json(error('Token expired or invalid', ErrorCode.TOKEN_EXPIRED));
   }
 
   db.prepare('UPDATE email_verifications SET used = 1 WHERE id = ?').run(record.id);
   db.prepare('UPDATE users SET email_verified = 1, email_verified_at = ? WHERE id = ?').run(now, record.user_id);
 
   logAudit(record.user_id, 'EMAIL_VERIFIED', req, 'Email verified successfully');
-  res.json({ message: 'Email verified successfully' });
+  res.json(message('Email verified successfully'));
 });
 
 // POST /api/auth/email/resend (authenticated)
@@ -288,8 +307,8 @@ router.post('/email/resend', authenticateToken, (req, res) => {
   const userId = (req as any).user.id;
   const user: any = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
 
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  if (user.email_verified) return res.status(400).json({ error: 'Email is already verified' });
+  if (!user) return res.status(404).json(error('User not found', ErrorCode.RESOURCE_NOT_FOUND));
+  if (user.email_verified) return res.status(400).json(error('Email is already verified', ErrorCode.VALIDATION_ERROR));
 
   const verificationToken = crypto.randomUUID();
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
@@ -302,22 +321,18 @@ router.post('/email/resend', authenticateToken, (req, res) => {
   });
 
   logAudit(userId, 'EMAIL_VERIFICATION_RESENT', req, 'Verification email resent');
-  res.json({ message: 'Verification email sent' });
+  res.json(message('Verification email sent'));
 });
 
 // POST /api/auth/email/resend-public (public, no auth)
-router.post('/email/resend-public', (req, res) => {
+router.post('/email/resend-public', validate({ body: emailResendPublicSchema }), (req, res) => {
   const { email, username } = req.body;
-  if (!email && !username) {
-    return res.status(400).json({ error: 'Email or username is required' });
-  }
-
   const user: any = email
     ? db.prepare('SELECT * FROM users WHERE email = ?').get(email)
     : db.prepare('SELECT * FROM users WHERE username = ?').get(username);
 
   if (!user || user.email_verified) {
-    return res.json({ message: 'If the account exists and is unverified, a verification link will be sent' });
+    return res.json(message('If the account exists and is unverified, a verification link will be sent'));
   }
 
   const verificationToken = crypto.randomUUID();
@@ -331,16 +346,16 @@ router.post('/email/resend-public', (req, res) => {
   });
 
   logAudit(user.id, 'EMAIL_VERIFICATION_RESENT', req, 'Verification email resent (public)');
-  res.json({ message: 'If the email exists and is unverified, a verification link will be sent' });
+  res.json(message('If the email exists and is unverified, a verification link will be sent'));
 });
 
 // POST /api/auth/password/reset-request
-router.post('/password/reset-request', (req, res) => {
+router.post('/password/reset-request', validate({ body: passwordResetRequestSchema }), (req, res) => {
   const { email } = req.body;
 
   const user: any = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
   if (!user) {
-    return res.json({ message: 'If the email exists, a reset link will be sent' });
+    return res.json(message('If the email exists, a reset link will be sent'));
   }
 
   const token = crypto.randomBytes(32).toString('hex');
@@ -356,54 +371,58 @@ router.post('/password/reset-request', (req, res) => {
     console.error('Failed to send password reset email:', err);
   });
 
-  res.json({ message: 'If the email exists, a reset link will be sent' });
+  res.json(message('If the email exists, a reset link will be sent'));
 });
 
 // POST /api/auth/password/reset-verify
-router.post('/password/reset-verify', (req, res) => {
+router.post('/password/reset-verify', validate({ body: passwordResetVerifySchema }), (req, res) => {
   const { token } = req.body;
 
   const reset: any = db.prepare('SELECT * FROM password_resets WHERE token = ? AND used = 0').get(token);
-  if (!reset) return res.status(400).json({ error: 'Invalid or used token' });
-  if (new Date(reset.expires_at) < new Date()) return res.status(400).json({ error: 'Token expired' });
+  if (!reset) return res.status(400).json(error('Invalid or used token', ErrorCode.TOKEN_INVALID));
+  if (new Date(reset.expires_at) < new Date()) return res.status(400).json(error('Token expired', ErrorCode.TOKEN_EXPIRED));
 
-  res.json({ valid: true });
+  res.json(success({ valid: true }));
 });
 
 // POST /api/auth/password/reset
-router.post('/password/reset', (req, res) => {
+router.post('/password/reset', validate({ body: passwordResetSchema }), (req, res) => {
   const { token, new_password } = req.body;
 
   const strength = validatePasswordStrength(new_password);
   if (!strength.valid) {
-    return res.status(400).json({ error: 'Password does not meet requirements', details: strength.errors });
+    return res.status(400).json({
+      ...error('Password does not meet requirements', ErrorCode.VALIDATION_PASSWORD_WEAK),
+      details: strength.errors,
+    });
   }
 
   const reset: any = db.prepare('SELECT * FROM password_resets WHERE token = ? AND used = 0').get(token);
-  if (!reset) return res.status(400).json({ error: 'Invalid or used token' });
-  if (new Date(reset.expires_at) < new Date()) return res.status(400).json({ error: 'Token expired' });
+  if (!reset) return res.status(400).json(error('Invalid or used token', ErrorCode.TOKEN_INVALID));
+  if (new Date(reset.expires_at) < new Date()) return res.status(400).json(error('Token expired', ErrorCode.TOKEN_EXPIRED));
 
   const hash = bcrypt.hashSync(new_password, 10);
   db.prepare('UPDATE users SET password_hash = ?, password_changed_at = ? WHERE id = ?').run(hash, new Date().toISOString(), reset.user_id);
   db.prepare('UPDATE password_resets SET used = 1 WHERE id = ?').run(reset.id);
+  
+  // Revoke all tokens for this user after password reset
+  revokeAllUserTokens(reset.user_id, RevokeReason.PASSWORD_CHANGE);
   db.prepare('UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ?').run(reset.user_id);
 
   logAudit(reset.user_id, 'PASSWORD_RESET_COMPLETE', req, 'Password has been reset');
-  res.json({ message: 'Password has been reset successfully' });
+  res.json(message('Password has been reset successfully'));
 });
 
 // POST /api/auth/refresh
-router.post('/refresh', (req, res) => {
+router.post('/refresh', validate({ body: tokenRefreshSchema }), (req, res) => {
   const { refresh_token } = req.body;
 
-  if (!refresh_token) return res.status(400).json({ error: 'Refresh token required' });
-
   const storedToken: any = db.prepare('SELECT * FROM refresh_tokens WHERE token = ? AND revoked = 0').get(refresh_token);
-  if (!storedToken) return res.status(401).json({ error: 'Invalid refresh token' });
-  if (new Date(storedToken.expires_at) < new Date()) return res.status(401).json({ error: 'Refresh token expired' });
+  if (!storedToken) return res.status(401).json(error('Invalid refresh token', ErrorCode.TOKEN_INVALID));
+  if (new Date(storedToken.expires_at) < new Date()) return res.status(401).json(error('Refresh token expired', ErrorCode.TOKEN_EXPIRED));
 
   const user: any = db.prepare('SELECT * FROM users WHERE id = ?').get(storedToken.user_id);
-  if (!user || !user.is_active) return res.status(401).json({ error: 'User not found or inactive' });
+  if (!user || !user.is_active) return res.status(401).json(error('User not found or inactive', ErrorCode.ACCOUNT_DISABLED));
 
   const accessToken = jwt.sign(
     { id: user.id, username: user.username, is_admin: user.is_admin, tenant_id: user.tenant_id },
@@ -426,11 +445,11 @@ router.post('/refresh', (req, res) => {
 
   logAudit(user.id, 'TOKEN_REFRESH', req);
 
-  res.json({
+  res.json(success({
     access_token: accessToken,
     refresh_token: newRefreshToken,
     expires_in: 86400,
-  });
+  }));
 });
 
 export default router;

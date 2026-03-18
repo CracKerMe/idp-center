@@ -44,7 +44,7 @@ export const useAuthStore = defineStore('auth', () => {
         body: JSON.stringify({ username, password, otp })
       })
 
-      const data = await response.json()
+      const { data } = await response.json()
       console.log('Login response:', data)
       console.log('Response status:', response.status)
       console.log('access_token:', data.access_token)
@@ -185,7 +185,7 @@ export const useAuthStore = defineStore('auth', () => {
         body: JSON.stringify({ refresh_token: refreshToken })
       })
 
-      const data = await response.json()
+      const { data } = await response.json()
 
       if (!response.ok) {
         console.error('Token refresh failed:', data.error)

@@ -5,6 +5,7 @@ import { db } from '../database.js';
 import { config } from '../config.js';
 import { logAudit } from '../utils/audit.js';
 import { authenticateToken } from '../middleware/auth.js';
+import { success, error, ErrorCode } from '../utils/response.js';
 
 const router = express.Router();
 
@@ -37,17 +38,17 @@ router.get('/authorize', (req, res) => {
   const { client_id, redirect_uri, scope } = req.query;
 
   const client = db.prepare('SELECT * FROM clients WHERE client_id = ?').get(client_id);
-  if (!client) return res.status(400).json({ error: 'Invalid client_id' });
+  if (!client) return res.status(400).json(error('Invalid client_id', ErrorCode.VALIDATION_ERROR));
 
   const rawUris = (client as any).redirect_uris || '';
   const registeredUris: string[] = rawUris.startsWith('[')
     ? JSON.parse(rawUris)
     : rawUris.split(',').map((u: string) => u.trim()).filter(Boolean);
   if (!redirect_uri || !registeredUris.includes(redirect_uri as string)) {
-    return res.status(400).json({ error: 'INVALID_REDIRECT_URI' });
+    return res.status(400).json(error('Invalid redirect_uri', ErrorCode.VALIDATION_ERROR));
   }
 
-  res.json({ client_name: (client as any).client_name, scopes: scope });
+  res.json(success({ client_name: (client as any).client_name, scopes: scope }));
 });
 
 // POST /api/oidc/authorize
@@ -55,17 +56,17 @@ router.post('/authorize', authenticateToken, (req, res) => {
   const { client_id, redirect_uri, response_type, state, nonce, scope, code_challenge, code_challenge_method } = req.body;
   const userId = (req as any).user.id;
 
-  if (response_type !== 'code') return res.status(400).json({ error: 'Unsupported response_type' });
+  if (response_type !== 'code') return res.status(400).json(error('Unsupported response_type', ErrorCode.VALIDATION_ERROR));
 
   const client = db.prepare('SELECT * FROM clients WHERE client_id = ?').get(client_id);
-  if (!client) return res.status(400).json({ error: 'Invalid client_id' });
+  if (!client) return res.status(400).json(error('Invalid client_id', ErrorCode.VALIDATION_ERROR));
 
   const rawUris = (client as any).redirect_uris || '';
   const registeredUris: string[] = rawUris.startsWith('[')
     ? JSON.parse(rawUris)
     : rawUris.split(',').map((u: string) => u.trim()).filter(Boolean);
   if (!redirect_uri || !registeredUris.includes(redirect_uri as string)) {
-    return res.status(400).json({ error: 'INVALID_REDIRECT_URI' });
+    return res.status(400).json(error('Invalid redirect_uri', ErrorCode.VALIDATION_ERROR));
   }
 
   const code = crypto.randomBytes(16).toString('hex');
@@ -84,7 +85,7 @@ router.post('/authorize', authenticateToken, (req, res) => {
   redirectUrl.searchParams.append('code', code);
   if (state) redirectUrl.searchParams.append('state', state as string);
 
-  res.json({ redirect_url: redirectUrl.toString() });
+  res.json(success({ redirect_url: redirectUrl.toString() }));
 });
 
 // POST /api/oidc/token
@@ -92,20 +93,20 @@ router.post('/token', (req, res) => {
   const { grant_type, code, client_id, client_secret, redirect_uri, code_verifier, refresh_token } = req.body;
 
   if (grant_type === 'refresh_token') {
-    if (!refresh_token) return res.status(400).json({ error: 'refresh_token is required' });
+    if (!refresh_token) return res.status(400).json(error('refresh_token is required', ErrorCode.VALIDATION_REQUIRED));
 
     const client: any = db.prepare('SELECT * FROM clients WHERE client_id = ? AND client_secret = ?').get(client_id, client_secret);
-    if (!client) return res.status(401).json({ error: 'Invalid client credentials' });
+    if (!client) return res.status(401).json(error('Invalid client credentials', ErrorCode.AUTH_INVALID_CREDENTIALS));
 
     const rtRecord: any = db.prepare(
       'SELECT * FROM refresh_tokens WHERE token = ? AND client_id = ? AND revoked = 0'
     ).get(refresh_token, client_id);
     if (!rtRecord || new Date(rtRecord.expires_at) < new Date()) {
-      return res.status(400).json({ error: 'Invalid or expired refresh_token' });
+      return res.status(400).json(error('Invalid or expired refresh_token', ErrorCode.TOKEN_INVALID));
     }
 
     const user: any = db.prepare('SELECT * FROM users WHERE id = ?').get(rtRecord.user_id);
-    if (!user) return res.status(400).json({ error: 'User not found' });
+    if (!user) return res.status(400).json(error('User not found', ErrorCode.RESOURCE_NOT_FOUND));
 
     db.prepare('UPDATE refresh_tokens SET revoked = 1 WHERE id = ?').run(rtRecord.id);
     const newRefreshToken = crypto.randomBytes(32).toString('hex');
@@ -148,28 +149,28 @@ router.post('/token', (req, res) => {
     });
   }
 
-  if (grant_type !== 'authorization_code') return res.status(400).json({ error: 'Unsupported grant_type' });
+  if (grant_type !== 'authorization_code') return res.status(400).json(error('Unsupported grant_type', ErrorCode.VALIDATION_ERROR));
 
   const client: any = db.prepare('SELECT * FROM clients WHERE client_id = ? AND client_secret = ?').get(client_id, client_secret);
-  if (!client) return res.status(401).json({ error: 'Invalid client credentials' });
+  if (!client) return res.status(401).json(error('Invalid client credentials', ErrorCode.AUTH_INVALID_CREDENTIALS));
 
   const authCode: any = db.prepare('SELECT * FROM auth_codes WHERE code = ? AND client_id = ? AND redirect_uri = ? AND used = 0').get(code, client_id, redirect_uri);
   if (!authCode || new Date(authCode.expires_at) < new Date()) {
-    return res.status(400).json({ error: 'Invalid or expired code' });
+    return res.status(400).json(error('Invalid or expired code', ErrorCode.TOKEN_INVALID));
   }
 
   if (authCode.code_challenge) {
-    if (!code_verifier) return res.status(400).json({ error: 'INVALID_CODE_VERIFIER' });
+    if (!code_verifier) return res.status(400).json(error('code_verifier is required', ErrorCode.VALIDATION_REQUIRED));
     const computedChallenge = crypto.createHash('sha256').update(code_verifier).digest('base64url');
     if (computedChallenge !== authCode.code_challenge) {
-      return res.status(400).json({ error: 'INVALID_CODE_VERIFIER' });
+      return res.status(400).json(error('Invalid code_verifier', ErrorCode.VALIDATION_ERROR));
     }
   }
 
   db.prepare('UPDATE auth_codes SET used = 1 WHERE id = ?').run(authCode.id);
 
   const user: any = db.prepare('SELECT * FROM users WHERE id = ?').get(authCode.user_id);
-  if (!user) return res.status(400).json({ error: 'User not found' });
+  if (!user) return res.status(400).json(error('User not found', ErrorCode.RESOURCE_NOT_FOUND));
 
   const tokenScope = authCode.scope || 'openid';
 
@@ -224,13 +225,13 @@ router.post('/token', (req, res) => {
 router.get('/userinfo', (req, res) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
-  if (!token) return res.sendStatus(401);
+  if (!token) return res.status(401).json(error('Missing authorization token', ErrorCode.AUTH_UNAUTHORIZED));
 
   const accessToken: any = db.prepare('SELECT * FROM access_tokens WHERE token = ? AND revoked = 0').get(token);
-  if (!accessToken || new Date(accessToken.expires_at) < new Date()) return res.sendStatus(401);
+  if (!accessToken || new Date(accessToken.expires_at) < new Date()) return res.status(401).json(error('Invalid or expired access token', ErrorCode.TOKEN_EXPIRED));
 
   const user: any = db.prepare('SELECT id, username, email, full_name, avatar_url FROM users WHERE id = ?').get(accessToken.user_id);
-  if (!user) return res.sendStatus(404);
+  if (!user) return res.status(404).json(error('User not found', ErrorCode.RESOURCE_NOT_FOUND));
 
   const scope: string = accessToken.scope || 'openid';
   const response: Record<string, any> = { sub: user.id };

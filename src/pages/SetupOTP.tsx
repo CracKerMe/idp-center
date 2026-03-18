@@ -16,9 +16,9 @@ export default function SetupOTP({ user, setUser }: { user: any, setUser: (user:
       method: 'POST',
     })
     .then(res => res.json())
-    .then(data => {
-      setQrCode(data.qrCodeUrl);
-      setSecret(data.secret);
+    .then(result => {
+      setQrCode(result.data?.qrCodeUrl || result.qrCodeUrl);
+      setSecret(result.data?.secret || result.secret);
     });
   }, []);
 

@@ -64,8 +64,8 @@ export default function TenantsList() {
         setFormData({ name: '', domain: '', settings: '{}' });
         fetchTenants();
       } else {
-        const data = await res.json();
-        setError(data.error || 'Failed to save tenant');
+        const result = await res.json();
+        setError(result.error || 'Failed to save tenant');
       }
     } catch (err) {
       setError('Network error');

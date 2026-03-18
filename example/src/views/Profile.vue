@@ -22,7 +22,7 @@ onMounted(async () => {
       })
       
       if (response.ok) {
-        const userData = await response.json()
+        const { data: userData } = await response.json()
         fullName.value = userData.full_name || ''
         phone.value = userData.phone || ''
       }
@@ -51,7 +51,7 @@ async function updateProfile() {
     })
     
     if (!response.ok) {
-      const data = await response.json()
+      const { data } = await response.json()
       throw new Error(data.error || 'Failed to update profile')
     }
     

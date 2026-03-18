@@ -9,6 +9,16 @@ import { logAudit } from '../utils/audit.js';
 import { validatePasswordStrength } from '../utils/password.js';
 import { emailService } from '../services/email.service.js';
 import { authenticateToken } from '../middleware/auth.js';
+import { validate } from '../middleware/validate.js';
+import { success, error, message, ErrorCode } from '../utils/response.js';
+import { revokeOtherUserTokens, RevokeReason } from '../utils/token-blacklist.js';
+import {
+  updateProfileSchema,
+  changePasswordSchema,
+  deleteAccountSchema,
+  sessionIdParamsSchema,
+  deviceIdParamsSchema,
+} from '../validators/user.validator.js';
 
 const router = express.Router();
 
@@ -60,7 +70,7 @@ function executeAccountDeletion(userId: string) {
 }
 
 // PUT /api/user/profile
-router.put('/profile', authenticateToken, (req, res) => {
+router.put('/profile', authenticateToken, validate({ body: updateProfileSchema }), (req, res) => {
   const userId = (req as any).user.id;
   const { full_name, phone } = req.body;
 
@@ -69,27 +79,26 @@ router.put('/profile', authenticateToken, (req, res) => {
   );
 
   logAudit(userId, 'PROFILE_UPDATE', req, `Updated profile: full_name=${full_name}, phone=${phone}`);
-  res.json({ message: 'Profile updated successfully' });
+  res.json(message('Profile updated successfully'));
 });
 
 // PUT /api/user/password
-router.put('/password', authenticateToken, (req, res) => {
+router.put('/password', authenticateToken, validate({ body: changePasswordSchema }), (req, res) => {
   const userId = (req as any).user.id;
   const { current_password, new_password } = req.body;
-
-  if (!current_password || !new_password) {
-    return res.status(400).json({ error: 'Current and new password are required' });
-  }
 
   const user: any = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
   if (!bcrypt.compareSync(current_password, user.password_hash)) {
     logAudit(userId, 'PASSWORD_CHANGE_FAILED', req, 'Incorrect current password');
-    return res.status(401).json({ error: 'Current password is incorrect' });
+    return res.status(401).json(error('Current password is incorrect', ErrorCode.AUTH_INVALID_CREDENTIALS));
   }
 
   const strength = validatePasswordStrength(new_password);
   if (!strength.valid) {
-    return res.status(400).json({ error: 'New password does not meet requirements', details: strength.errors });
+    return res.status(400).json({
+      ...error('New password does not meet requirements', ErrorCode.VALIDATION_PASSWORD_WEAK),
+      details: strength.errors,
+    });
   }
 
   const hash = bcrypt.hashSync(new_password, 10);
@@ -97,18 +106,17 @@ router.put('/password', authenticateToken, (req, res) => {
     hash, new Date().toISOString(), new Date().toISOString(), userId
   );
 
-  const authHeader = req.headers['authorization'];
-  const currentAccessToken = authHeader && authHeader.split(' ')[1];
+  const currentAccessToken = (req as any).token;
 
   if (currentAccessToken) {
-    db.prepare('UPDATE access_tokens SET revoked = 1 WHERE user_id = ? AND token != ?').run(userId, currentAccessToken);
+    revokeOtherUserTokens(userId, currentAccessToken, RevokeReason.PASSWORD_CHANGE);
   } else {
     db.prepare('UPDATE access_tokens SET revoked = 1 WHERE user_id = ?').run(userId);
   }
   db.prepare('UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ?').run(userId);
 
   logAudit(userId, 'PASSWORD_CHANGE_SUCCESS', req, 'Password changed successfully');
-  res.json({ message: 'Password changed successfully' });
+  res.json(message('Password changed successfully'));
 });
 
 // GET /api/user/sessions
@@ -121,25 +129,25 @@ router.get('/sessions', authenticateToken, (req, res) => {
     WHERE s.user_id = ?
     ORDER BY s.last_active DESC
   `).all(userId);
-  res.json(sessions);
+  res.json(success(sessions));
 });
 
 // DELETE /api/user/sessions/:id
-router.delete('/sessions/:id', authenticateToken, (req, res) => {
+router.delete('/sessions/:sessionId', authenticateToken, validate({ params: sessionIdParamsSchema }), (req, res) => {
   const userId = (req as any).user.id;
-  const { id } = req.params;
+  const { sessionId } = req.params;
   const currentSessionId = req.headers['x-session-id'];
 
-  if (currentSessionId && id === currentSessionId) {
-    return res.status(400).json({ error: 'Cannot revoke current session. Use logout instead.' });
+  if (currentSessionId && sessionId === currentSessionId) {
+    return res.status(400).json(error('Cannot revoke current session. Use logout instead.', ErrorCode.VALIDATION_ERROR));
   }
 
-  const session: any = db.prepare('SELECT * FROM sessions WHERE id = ? AND user_id = ?').get(id, userId);
-  if (!session) return res.status(404).json({ error: 'Session not found' });
+  const session: any = db.prepare('SELECT * FROM sessions WHERE id = ? AND user_id = ?').get(sessionId, userId);
+  if (!session) return res.status(404).json(error('Session not found', ErrorCode.RESOURCE_NOT_FOUND));
 
-  db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
-  logAudit(userId, 'SESSION_REVOKED', req, `Session ${id} revoked remotely`);
-  res.json({ message: 'Session revoked successfully' });
+  db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
+  logAudit(userId, 'SESSION_REVOKED', req, `Session ${sessionId} revoked remotely`);
+  res.json(message('Session revoked successfully'));
 });
 
 // GET /api/user/trusted-devices
@@ -149,20 +157,20 @@ router.get('/trusted-devices', authenticateToken, (req, res) => {
   const devices = db.prepare(
     'SELECT id, device_name, trusted_at, expires_at, last_used_at FROM trusted_devices WHERE user_id = ? AND expires_at > ? ORDER BY trusted_at DESC'
   ).all(userId, now);
-  res.json(devices);
+  res.json(success(devices));
 });
 
-// DELETE /api/user/trusted-devices/:id
-router.delete('/trusted-devices/:id', authenticateToken, (req, res) => {
+// DELETE /api/user/trusted-devices/:deviceId
+router.delete('/trusted-devices/:deviceId', authenticateToken, validate({ params: deviceIdParamsSchema }), (req, res) => {
   const userId = (req as any).user.id;
-  const { id } = req.params;
+  const { deviceId } = req.params;
 
-  const device: any = db.prepare('SELECT id FROM trusted_devices WHERE id = ? AND user_id = ?').get(id, userId);
-  if (!device) return res.status(404).json({ error: 'DEVICE_NOT_FOUND' });
+  const device: any = db.prepare('SELECT id FROM trusted_devices WHERE id = ? AND user_id = ?').get(deviceId, userId);
+  if (!device) return res.status(404).json(error('Device not found', ErrorCode.RESOURCE_NOT_FOUND));
 
-  db.prepare('DELETE FROM trusted_devices WHERE id = ? AND user_id = ?').run(id, userId);
-  logAudit(userId, 'TRUSTED_DEVICE_REVOKED', req, `Trusted device ${id} revoked`);
-  res.json({ message: 'Trusted device removed successfully' });
+  db.prepare('DELETE FROM trusted_devices WHERE id = ? AND user_id = ?').run(deviceId, userId);
+  logAudit(userId, 'TRUSTED_DEVICE_REVOKED', req, `Trusted device ${deviceId} revoked`);
+  res.json(message('Trusted device removed successfully'));
 });
 
 // GET /api/user/linked-accounts
@@ -171,19 +179,19 @@ router.get('/linked-accounts', authenticateToken, (req, res) => {
   const accounts = db.prepare(
     'SELECT provider, provider_username, created_at FROM linked_accounts WHERE user_id = ?'
   ).all(userId);
-  res.json(accounts);
+  res.json(success(accounts));
 });
 
 // POST /api/user/account/delete-request
 router.post('/account/delete-request', authenticateToken, (req, res) => {
   const userId = (req as any).user.id;
   const user: any = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
-  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (!user) return res.status(404).json(error('User not found', ErrorCode.RESOURCE_NOT_FOUND));
 
   const existing: any = db.prepare(
     "SELECT * FROM account_deletion_requests WHERE user_id = ? AND status = 'pending'"
   ).get(userId);
-  if (existing) return res.status(400).json({ error: 'DELETION_REQUEST_EXISTS' });
+  if (existing) return res.status(400).json(error('Deletion request already exists', ErrorCode.RESOURCE_ALREADY_EXISTS));
 
   const id = crypto.randomUUID();
   const requestedAt = new Date().toISOString();
@@ -198,11 +206,10 @@ router.post('/account/delete-request', authenticateToken, (req, res) => {
   });
 
   logAudit(userId, 'ACCOUNT_DELETION_REQUESTED', req, `Scheduled for ${scheduledDeleteAt}`);
-  res.json({
-    message: 'Account deletion request created',
+  res.json(success({
     scheduled_delete_at: scheduledDeleteAt,
     request: { id, user_id: userId, status: 'pending', requested_at: requestedAt, scheduled_delete_at: scheduledDeleteAt },
-  });
+  }, 'Account deletion request created'));
 });
 
 // DELETE /api/user/account/delete-request
@@ -212,7 +219,7 @@ router.delete('/account/delete-request', authenticateToken, (req, res) => {
   const pending: any = db.prepare(
     "SELECT * FROM account_deletion_requests WHERE user_id = ? AND status = 'pending'"
   ).get(userId);
-  if (!pending) return res.status(404).json({ error: 'NO_PENDING_REQUEST' });
+  if (!pending) return res.status(404).json(error('No pending deletion request found', ErrorCode.RESOURCE_NOT_FOUND));
 
   const cancelledAt = new Date().toISOString();
   db.prepare(
@@ -220,7 +227,7 @@ router.delete('/account/delete-request', authenticateToken, (req, res) => {
   ).run(cancelledAt, pending.id);
 
   logAudit(userId, 'ACCOUNT_DELETION_CANCELLED', req, `Request ${pending.id} cancelled`);
-  res.json({ message: 'Account deletion request cancelled' });
+  res.json(message('Account deletion request cancelled'));
 });
 
 // GET /api/user/account/delete-request
@@ -229,7 +236,7 @@ router.get('/account/delete-request', authenticateToken, (req, res) => {
   const request: any = db.prepare(
     'SELECT * FROM account_deletion_requests WHERE user_id = ? ORDER BY requested_at DESC LIMIT 1'
   ).get(userId);
-  res.json({ request: request || null });
+  res.json(success({ request: request || null }));
 });
 
 // POST /api/user/avatar
@@ -237,15 +244,15 @@ router.post('/avatar', authenticateToken, (req, res) => {
   avatarUpload.single('avatar')(req, res, (err) => {
     if (err) {
       if (err.message === 'INVALID_FILE_TYPE') {
-        return res.status(400).json({ error: 'INVALID_FILE_TYPE', message: 'Only jpg, png, and webp images are allowed' });
+        return res.status(400).json(error('Only jpg, png, and webp images are allowed', ErrorCode.VALIDATION_ERROR));
       }
-      if (err.code === 'LIMIT_FILE_SIZE') {
-        return res.status(400).json({ error: 'FILE_TOO_LARGE', message: 'File size must not exceed 2MB' });
+      if ((err as any).code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json(error('File size must not exceed 2MB', ErrorCode.VALIDATION_ERROR));
       }
-      return res.status(400).json({ error: 'UPLOAD_ERROR', message: err.message });
+      return res.status(400).json(error(err.message, ErrorCode.VALIDATION_ERROR));
     }
 
-    if (!req.file) return res.status(400).json({ error: 'NO_FILE', message: 'No file uploaded' });
+    if (!req.file) return res.status(400).json(error('No file uploaded', ErrorCode.VALIDATION_REQUIRED));
 
     const userId = (req as any).user.id;
     const ext = req.file.mimetype === 'image/jpeg' ? 'jpg'
@@ -258,7 +265,7 @@ router.post('/avatar', authenticateToken, (req, res) => {
     );
 
     logAudit(userId, 'AVATAR_UPLOADED', req, `Avatar updated: ${avatarUrl}`);
-    res.json({ avatar_url: avatarUrl });
+    res.json(success({ avatar_url: avatarUrl }));
   });
 });
 
@@ -267,14 +274,14 @@ router.put('/avatar/url', authenticateToken, (req, res) => {
   const userId = (req as any).user.id;
   const { url } = req.body;
 
-  if (!url || typeof url !== 'string') return res.status(400).json({ error: 'URL is required' });
+  if (!url || typeof url !== 'string') return res.status(400).json(error('URL is required', ErrorCode.VALIDATION_REQUIRED));
 
   db.prepare('UPDATE users SET avatar_url = ?, updated_at = ? WHERE id = ?').run(
     url, new Date().toISOString(), userId
   );
 
   logAudit(userId, 'AVATAR_URL_SET', req, `Avatar URL set to external URL`);
-  res.json({ avatar_url: url });
+  res.json(success({ avatar_url: url }));
 });
 
 // DELETE /api/user/avatar
@@ -286,7 +293,7 @@ router.delete('/avatar', authenticateToken, (req, res) => {
   );
 
   logAudit(userId, 'AVATAR_DELETED', req, 'Avatar cleared');
-  res.json({ message: 'Avatar deleted successfully' });
+  res.json(message('Avatar deleted successfully'));
 });
 
 export { executeAccountDeletion };

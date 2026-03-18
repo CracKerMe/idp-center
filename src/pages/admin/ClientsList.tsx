@@ -83,8 +83,8 @@ export default function ClientsList() {
       method: 'POST',
     });
     if (res.ok) {
-      const data = await res.json();
-      setRotatedSecret({ clientId: client.client_id, secret: data.client_secret });
+      const result = await res.json();
+      setRotatedSecret({ clientId: client.client_id, secret: result.data?.client_secret || result.client_secret });
       setShowSecret(false);
     } else {
       alert('Failed to rotate secret');

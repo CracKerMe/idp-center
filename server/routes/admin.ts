@@ -6,30 +6,70 @@ import { logAudit } from '../utils/audit.js';
 import { emailService } from '../services/email.service.js';
 import { cleanupExpiredTokens } from '../utils/cleanup.js';
 import { authenticateAdmin } from '../middleware/auth.js';
+import { validate } from '../middleware/validate.js';
+import { success, error, message, paginated, ErrorCode } from '../utils/response.js';
+import { revokeAllUserTokens, RevokeReason } from '../utils/token-blacklist.js';
+import {
+  userIdParamsSchema,
+  adminCreateUserSchema,
+  adminUpdateUserSchema,
+  clientIdParamsSchema,
+  createClientSchema,
+  updateClientSchema,
+  listUsersQuerySchema,
+  tenantIdParamsSchema,
+  createTenantSchema,
+  updateTenantSchema,
+} from '../validators/admin.validator.js';
 
 const router = express.Router();
 
 // GET /api/admin/users
-router.get('/users', authenticateAdmin, (req, res) => {
-  const users = db.prepare('SELECT id, username, email, is_active, is_admin, otp_enabled, created_at FROM users ORDER BY created_at DESC').all();
-  res.json(users);
+router.get('/users', authenticateAdmin, validate({ query: listUsersQuerySchema }), (req, res) => {
+  const { page, pageSize, search, tenant_id, is_active } = req.query as any;
+  const offset = (page - 1) * pageSize;
+
+  let whereClause = 'WHERE 1=1';
+  const params: any[] = [];
+
+  if (search) {
+    whereClause += ' AND (username LIKE ? OR email LIKE ?)';
+    params.push(`%${search}%`, `%${search}%`);
+  }
+  if (tenant_id) {
+    whereClause += ' AND tenant_id = ?';
+    params.push(tenant_id);
+  }
+  if (is_active !== undefined) {
+    whereClause += ' AND is_active = ?';
+    params.push(is_active ? 1 : 0);
+  }
+
+  const countQuery = `SELECT COUNT(*) as total FROM users ${whereClause}`;
+  const total = (db.prepare(countQuery).get(...params) as any).total;
+
+  const dataQuery = `
+    SELECT id, username, email, full_name, is_active, is_admin, otp_enabled, tenant_id, created_at
+    FROM users ${whereClause}
+    ORDER BY created_at DESC
+    LIMIT ? OFFSET ?
+  `;
+  const users = db.prepare(dataQuery).all(...params, pageSize, offset);
+
+  res.json(paginated(users, total, page, pageSize));
 });
 
 // POST /api/admin/users
-router.post('/users', authenticateAdmin, async (req, res) => {
-  const { username, email, password, is_admin } = req.body;
-
-  if (!username || !email || !password) {
-    return res.status(400).json({ error: 'Username, email and password are required' });
-  }
+router.post('/users', authenticateAdmin, validate({ body: adminCreateUserSchema }), async (req, res) => {
+  const { username, email, password, full_name, phone, is_admin, tenant_id } = req.body;
 
   try {
     const password_hash = await bcrypt.hash(password, 10);
     const userId = crypto.randomUUID();
 
-    db.prepare('INSERT INTO users (id, username, email, password_hash, is_admin, email_verified, email_verified_at) VALUES (?, ?, ?, ?, ?, 1, ?)').run(
-      userId, username, email, password_hash, is_admin ? 1 : 0, new Date().toISOString()
-    );
+    db.prepare(
+      'INSERT INTO users (id, username, email, password_hash, full_name, phone, is_admin, tenant_id, email_verified, email_verified_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)'
+    ).run(userId, username, email, password_hash, full_name || null, phone || null, is_admin ? 1 : 0, tenant_id || 'default', new Date().toISOString());
 
     logAudit(
       (req as any).user.id,
@@ -38,178 +78,183 @@ router.post('/users', authenticateAdmin, async (req, res) => {
       JSON.stringify({ created_username: username, created_email: email, is_admin })
     );
 
-    res.json({ success: true, id: userId });
-  } catch (error: any) {
-    if (error.message.includes('UNIQUE constraint failed')) {
-      return res.status(400).json({ error: 'Username or email already exists' });
+    res.json(success({ id: userId }, 'User created successfully'));
+  } catch (err: any) {
+    if (err.message.includes('UNIQUE constraint failed')) {
+      return res.status(400).json(error('Username or email already exists', ErrorCode.RESOURCE_ALREADY_EXISTS));
     }
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json(error('Internal server error', ErrorCode.SERVER_ERROR));
   }
 });
 
-// PUT /api/admin/users/:id
-router.put('/users/:id', authenticateAdmin, (req, res) => {
-  const { id } = req.params;
-  const { email, is_admin, is_active } = req.body;
+// PUT /api/admin/users/:userId
+router.put('/users/:userId', authenticateAdmin, validate({ params: userIdParamsSchema, body: adminUpdateUserSchema }), (req, res) => {
+  const { userId } = req.params;
+  const updates = req.body;
 
-  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
-  if (!user) return res.status(404).json({ error: 'User not found' });
+  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
+  if (!user) return res.status(404).json(error('User not found', ErrorCode.RESOURCE_NOT_FOUND));
 
-  const updates: string[] = [];
+  const setClauses: string[] = [];
   const params: any[] = [];
 
-  if (email !== undefined) { updates.push('email = ?'); params.push(email); }
-  if (is_admin !== undefined) {
-    updates.push('is_admin = ?');
-    params.push(is_admin ? 1 : 0);
-    if (is_admin) {
-      updates.push('email_verified = 1');
-      updates.push('email_verified_at = ?');
+  if (updates.username !== undefined) { setClauses.push('username = ?'); params.push(updates.username); }
+  if (updates.email !== undefined) { setClauses.push('email = ?'); params.push(updates.email); }
+  if (updates.full_name !== undefined) { setClauses.push('full_name = ?'); params.push(updates.full_name); }
+  if (updates.phone !== undefined) { setClauses.push('phone = ?'); params.push(updates.phone); }
+  if (updates.is_admin !== undefined) {
+    setClauses.push('is_admin = ?');
+    params.push(updates.is_admin ? 1 : 0);
+    if (updates.is_admin) {
+      setClauses.push('email_verified = 1');
+      setClauses.push('email_verified_at = ?');
       params.push(new Date().toISOString());
     }
   }
-  if (is_active !== undefined) { updates.push('is_active = ?'); params.push(is_active ? 1 : 0); }
+  if (updates.is_active !== undefined) { setClauses.push('is_active = ?'); params.push(updates.is_active ? 1 : 0); }
+  if (updates.tenant_id !== undefined) { setClauses.push('tenant_id = ?'); params.push(updates.tenant_id); }
 
-  if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
+  if (setClauses.length === 0) return res.status(400).json(error('No fields to update', ErrorCode.VALIDATION_ERROR));
 
-  params.push(id);
-  db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  params.push(userId);
+  db.prepare(`UPDATE users SET ${setClauses.join(', ')} WHERE id = ?`).run(...params);
 
-  logAudit((req as any).user.id, 'admin_update_user', req, JSON.stringify({ target_user_id: id, updates: req.body }));
-  res.json({ success: true });
+  logAudit((req as any).user.id, 'admin_update_user', req, JSON.stringify({ target_user_id: userId, updates }));
+  res.json(message('User updated successfully'));
 });
 
-// DELETE /api/admin/users/:id
-router.delete('/users/:id', authenticateAdmin, (req, res) => {
-  const { id } = req.params;
+// DELETE /api/admin/users/:userId
+router.delete('/users/:userId', authenticateAdmin, validate({ params: userIdParamsSchema }), (req, res) => {
+  const { userId } = req.params;
 
-  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
-  if (!user) return res.status(404).json({ error: 'User not found' });
+  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
+  if (!user) return res.status(404).json(error('User not found', ErrorCode.RESOURCE_NOT_FOUND));
 
-  db.prepare('UPDATE users SET is_active = 0 WHERE id = ?').run(id);
-  logAudit((req as any).user.id, 'admin_delete_user', req, JSON.stringify({ target_user_id: id }));
-  res.json({ success: true });
+  db.prepare('UPDATE users SET is_active = 0 WHERE id = ?').run(userId);
+  logAudit((req as any).user.id, 'admin_delete_user', req, JSON.stringify({ target_user_id: userId }));
+  res.json(message('User deactivated successfully'));
 });
 
-// POST /api/admin/users/:id/ban
-router.post('/users/:id/ban', authenticateAdmin, (req, res) => {
-  const { id } = req.params;
+// POST /api/admin/users/:userId/ban
+router.post('/users/:userId/ban', authenticateAdmin, validate({ params: userIdParamsSchema }), (req, res) => {
+  const { userId } = req.params;
 
-  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
-  if (!user) return res.status(404).json({ error: 'User not found' });
+  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
+  if (!user) return res.status(404).json(error('User not found', ErrorCode.RESOURCE_NOT_FOUND));
 
-  db.prepare('UPDATE users SET is_active = 0 WHERE id = ?').run(id);
-  db.prepare('UPDATE access_tokens SET revoked = 1 WHERE user_id = ?').run(id);
-  db.prepare('UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ?').run(id);
+  db.prepare('UPDATE users SET is_active = 0 WHERE id = ?').run(userId);
+  revokeAllUserTokens(userId, RevokeReason.ACCOUNT_DISABLED);
+  db.prepare('UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ?').run(userId);
 
-  logAudit((req as any).user.id, 'admin_ban_user', req, JSON.stringify({ target_user_id: id }));
-  res.json({ success: true });
+  logAudit((req as any).user.id, 'admin_ban_user', req, JSON.stringify({ target_user_id: userId }));
+  res.json(message('User banned successfully'));
 });
 
-// POST /api/admin/users/:id/unban
-router.post('/users/:id/unban', authenticateAdmin, (req, res) => {
-  const { id } = req.params;
+// POST /api/admin/users/:userId/unban
+router.post('/users/:userId/unban', authenticateAdmin, validate({ params: userIdParamsSchema }), (req, res) => {
+  const { userId } = req.params;
 
-  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
-  if (!user) return res.status(404).json({ error: 'User not found' });
+  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
+  if (!user) return res.status(404).json(error('User not found', ErrorCode.RESOURCE_NOT_FOUND));
 
-  db.prepare('UPDATE users SET is_active = 1 WHERE id = ?').run(id);
-  logAudit((req as any).user.id, 'admin_unban_user', req, JSON.stringify({ target_user_id: id }));
-  res.json({ success: true });
+  db.prepare('UPDATE users SET is_active = 1 WHERE id = ?').run(userId);
+  logAudit((req as any).user.id, 'admin_unban_user', req, JSON.stringify({ target_user_id: userId }));
+  res.json(message('User unbanned successfully'));
 });
 
-// POST /api/admin/users/:id/reset-password
-router.post('/users/:id/reset-password', authenticateAdmin, async (req, res) => {
-  const { id } = req.params;
+// POST /api/admin/users/:userId/reset-password
+router.post('/users/:userId/reset-password', authenticateAdmin, validate({ params: userIdParamsSchema }), async (req, res) => {
+  const { userId } = req.params;
 
-  const user = db.prepare('SELECT id, email, username FROM users WHERE id = ?').get(id) as any;
-  if (!user) return res.status(404).json({ error: 'User not found' });
+  const user = db.prepare('SELECT id, email, username FROM users WHERE id = ?').get(userId) as any;
+  if (!user) return res.status(404).json(error('User not found', ErrorCode.RESOURCE_NOT_FOUND));
 
   try {
     const resetToken = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 
     db.prepare('INSERT INTO password_resets (id, user_id, token, expires_at) VALUES (?, ?, ?, ?)').run(
-      crypto.randomUUID(), id, resetToken, expiresAt
+      crypto.randomUUID(), userId, resetToken, expiresAt
     );
 
     await emailService.sendPasswordResetEmail(user.email, resetToken, user.username);
 
-    logAudit((req as any).user.id, 'admin_reset_password', req, JSON.stringify({ target_user_id: id }));
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: 'Internal server error' });
+    logAudit((req as any).user.id, 'admin_reset_password', req, JSON.stringify({ target_user_id: userId }));
+    res.json(message('Password reset email sent'));
+  } catch (err) {
+    res.status(500).json(error('Internal server error', 'SERVER_ERROR'));
   }
 });
 
 // GET /api/admin/clients
 router.get('/clients', authenticateAdmin, (req, res) => {
   const clients = db.prepare('SELECT id, client_id, client_name, redirect_uris, grant_types, created_at FROM clients ORDER BY created_at DESC').all();
-  res.json(clients);
+  res.json(success(clients));
 });
 
 // POST /api/admin/clients
-router.post('/clients', authenticateAdmin, (req, res) => {
-  const { client_name, redirect_uris } = req.body;
+router.post('/clients', authenticateAdmin, validate({ body: createClientSchema }), (req, res) => {
+  const { client_name, redirect_uris, grant_types } = req.body;
   const client_id = crypto.randomBytes(8).toString('hex');
   const client_secret = crypto.randomBytes(16).toString('hex');
 
   db.prepare('INSERT INTO clients (id, client_id, client_secret, client_name, redirect_uris, grant_types) VALUES (?, ?, ?, ?, ?, ?)').run(
-    crypto.randomUUID(), client_id, client_secret, client_name, redirect_uris, 'authorization_code'
+    crypto.randomUUID(), client_id, client_secret, client_name, redirect_uris, grant_types || 'authorization_code'
   );
-  res.json({ success: true });
+  res.json(success({ client_id, client_secret }, 'Client created successfully'));
 });
 
-// PUT /api/admin/clients/:id
-router.put('/clients/:id', authenticateAdmin, (req, res) => {
-  const { id } = req.params;
-  const { client_name, redirect_uris } = req.body;
+// PUT /api/admin/clients/:clientId
+router.put('/clients/:clientId', authenticateAdmin, validate({ params: clientIdParamsSchema, body: updateClientSchema }), (req, res) => {
+  const { clientId } = req.params;
+  const updates = req.body;
 
-  const client = db.prepare('SELECT id FROM clients WHERE id = ?').get(id);
-  if (!client) return res.status(404).json({ error: 'Client not found' });
+  const client = db.prepare('SELECT id FROM clients WHERE client_id = ?').get(clientId);
+  if (!client) return res.status(404).json(error('Client not found', ErrorCode.RESOURCE_NOT_FOUND));
 
-  const updates: string[] = [];
+  const setClauses: string[] = [];
   const params: any[] = [];
 
-  if (client_name !== undefined) { updates.push('client_name = ?'); params.push(client_name); }
-  if (redirect_uris !== undefined) {
-    updates.push('redirect_uris = ?');
-    params.push(typeof redirect_uris === 'string' ? redirect_uris : JSON.stringify(redirect_uris));
+  if (updates.client_name !== undefined) { setClauses.push('client_name = ?'); params.push(updates.client_name); }
+  if (updates.redirect_uris !== undefined) {
+    setClauses.push('redirect_uris = ?');
+    params.push(typeof updates.redirect_uris === 'string' ? updates.redirect_uris : JSON.stringify(updates.redirect_uris));
   }
+  if (updates.grant_types !== undefined) { setClauses.push('grant_types = ?'); params.push(updates.grant_types); }
 
-  if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
+  if (setClauses.length === 0) return res.status(400).json(error('No fields to update', ErrorCode.VALIDATION_ERROR));
 
-  params.push(id);
-  db.prepare(`UPDATE clients SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  params.push(clientId);
+  db.prepare(`UPDATE clients SET ${setClauses.join(', ')} WHERE client_id = ?`).run(...params);
 
-  logAudit((req as any).user.id, 'admin_update_client', req, JSON.stringify({ client_id: id }));
-  res.json({ success: true });
+  logAudit((req as any).user.id, 'admin_update_client', req, JSON.stringify({ client_id: clientId }));
+  res.json(message('Client updated successfully'));
 });
 
-// DELETE /api/admin/clients/:id
-router.delete('/clients/:id', authenticateAdmin, (req, res) => {
-  const { id } = req.params;
+// DELETE /api/admin/clients/:clientId
+router.delete('/clients/:clientId', authenticateAdmin, validate({ params: clientIdParamsSchema }), (req, res) => {
+  const { clientId } = req.params;
 
-  const client = db.prepare('SELECT id FROM clients WHERE id = ?').get(id);
-  if (!client) return res.status(404).json({ error: 'Client not found' });
+  const client = db.prepare('SELECT id FROM clients WHERE client_id = ?').get(clientId);
+  if (!client) return res.status(404).json(error('Client not found', ErrorCode.RESOURCE_NOT_FOUND));
 
-  db.prepare('DELETE FROM clients WHERE id = ?').run(id);
-  logAudit((req as any).user.id, 'admin_delete_client', req, JSON.stringify({ client_id: id }));
-  res.json({ success: true });
+  db.prepare('DELETE FROM clients WHERE client_id = ?').run(clientId);
+  logAudit((req as any).user.id, 'admin_delete_client', req, JSON.stringify({ client_id: clientId }));
+  res.json(message('Client deleted successfully'));
 });
 
-// POST /api/admin/clients/:id/rotate-secret
-router.post('/clients/:id/rotate-secret', authenticateAdmin, (req, res) => {
-  const { id } = req.params;
+// POST /api/admin/clients/:clientId/rotate-secret
+router.post('/clients/:clientId/rotate-secret', authenticateAdmin, validate({ params: clientIdParamsSchema }), (req, res) => {
+  const { clientId } = req.params;
 
-  const client = db.prepare('SELECT id FROM clients WHERE id = ?').get(id);
-  if (!client) return res.status(404).json({ error: 'Client not found' });
+  const client = db.prepare('SELECT id FROM clients WHERE client_id = ?').get(clientId);
+  if (!client) return res.status(404).json(error('Client not found', ErrorCode.RESOURCE_NOT_FOUND));
 
   const newSecret = crypto.randomBytes(16).toString('hex');
-  db.prepare('UPDATE clients SET client_secret = ? WHERE id = ?').run(newSecret, id);
+  db.prepare('UPDATE clients SET client_secret = ? WHERE client_id = ?').run(newSecret, clientId);
 
-  logAudit((req as any).user.id, 'admin_rotate_client_secret', req, JSON.stringify({ client_id: id }));
-  res.json({ success: true, client_secret: newSecret });
+  logAudit((req as any).user.id, 'admin_rotate_client_secret', req, JSON.stringify({ client_id: clientId }));
+  res.json(success({ client_secret: newSecret }, 'Secret rotated successfully'));
 });
 
 // GET /api/admin/audit
@@ -241,10 +286,7 @@ router.get('/audit', authenticateAdmin, (req, res) => {
   `;
   const logs = db.prepare(dataQuery).all(...params, pageSizeNum, offset);
 
-  res.json({
-    data: logs,
-    pagination: { page: pageNum, pageSize: pageSizeNum, total, totalPages: Math.ceil(total / pageSizeNum) },
-  });
+  res.json(paginated(logs, total, pageNum, pageSizeNum));
 });
 
 // GET /api/admin/audit/filter
@@ -269,13 +311,13 @@ router.get('/audit/filter', authenticateAdmin, (req, res) => {
   query += ' ORDER BY a.created_at DESC LIMIT ?';
   params.push(parseInt(limit as string));
 
-  res.json(db.prepare(query).all(...params));
+  res.json(success(db.prepare(query).all(...params)));
 });
 
 // GET /api/admin/audit/actions
 router.get('/audit/actions', authenticateAdmin, (req, res) => {
   const actions = db.prepare('SELECT DISTINCT action FROM audit_logs ORDER BY action').all();
-  res.json(actions.map((a: any) => a.action));
+  res.json(success(actions.map((a: any) => a.action)));
 });
 
 // GET /api/admin/stats
@@ -290,25 +332,24 @@ router.get('/stats', authenticateAdmin, (req, res) => {
   const recentLogins = db.prepare('SELECT COUNT(*) as count FROM audit_logs WHERE action = ? AND created_at > ?').get('LOGIN_SUCCESS', yesterday) as any;
   const recentRegistrations = db.prepare('SELECT COUNT(*) as count FROM audit_logs WHERE action = ? AND created_at > ?').get('REGISTER', yesterday) as any;
 
-  res.json({
+  res.json(success({
     users: userCount.count,
     tenants: tenantCount.count,
     clients: clientCount.count,
     activeTokens: activeTokens.count,
     activeSessions: activeSessions.count,
     last24h: { logins: recentLogins.count, registrations: recentRegistrations.count },
-  });
+  }));
 });
 
 // GET /api/admin/tenants
 router.get('/tenants', authenticateAdmin, (req, res) => {
-  res.json(db.prepare('SELECT * FROM tenants ORDER BY created_at DESC').all());
+  res.json(success(db.prepare('SELECT * FROM tenants ORDER BY created_at DESC').all()));
 });
 
 // POST /api/admin/tenants
-router.post('/tenants', authenticateAdmin, (req, res) => {
+router.post('/tenants', authenticateAdmin, validate({ body: createTenantSchema }), (req, res) => {
   const { name, domain, settings } = req.body;
-  if (!name) return res.status(400).json({ error: 'Tenant name is required' });
 
   const id = crypto.randomUUID();
   db.prepare('INSERT INTO tenants (id, name, domain, settings) VALUES (?, ?, ?, ?)').run(
@@ -316,32 +357,32 @@ router.post('/tenants', authenticateAdmin, (req, res) => {
   );
 
   logAudit((req as any).user.id, 'TENANT_CREATE', req, `Created tenant: ${name}`);
-  res.json({ success: true, id });
+  res.json(success({ id }, 'Tenant created successfully'));
 });
 
-// PUT /api/admin/tenants/:id
-router.put('/tenants/:id', authenticateAdmin, (req, res) => {
-  const { id } = req.params;
+// PUT /api/admin/tenants/:tenantId
+router.put('/tenants/:tenantId', authenticateAdmin, validate({ params: tenantIdParamsSchema, body: updateTenantSchema }), (req, res) => {
+  const { tenantId } = req.params;
   const { name, domain, is_active, settings } = req.body;
 
   db.prepare('UPDATE tenants SET name = ?, domain = ?, is_active = ?, settings = ? WHERE id = ?').run(
-    name, domain, is_active ? 1 : 0, JSON.stringify(settings || {}), id
+    name, domain, is_active ? 1 : 0, JSON.stringify(settings || {}), tenantId
   );
 
-  logAudit((req as any).user.id, 'TENANT_UPDATE', req, `Updated tenant: ${id}`);
-  res.json({ success: true });
+  logAudit((req as any).user.id, 'TENANT_UPDATE', req, `Updated tenant: ${tenantId}`);
+  res.json(message('Tenant updated successfully'));
 });
 
-// DELETE /api/admin/tenants/:id
-router.delete('/tenants/:id', authenticateAdmin, (req, res) => {
-  const { id } = req.params;
-  if (id === 'default') return res.status(400).json({ error: 'Cannot delete default tenant' });
+// DELETE /api/admin/tenants/:tenantId
+router.delete('/tenants/:tenantId', authenticateAdmin, validate({ params: tenantIdParamsSchema }), (req, res) => {
+  const { tenantId } = req.params;
+  if (tenantId === 'default') return res.status(400).json(error('Cannot delete default tenant', ErrorCode.VALIDATION_ERROR));
 
-  db.prepare('UPDATE users SET tenant_id = ? WHERE tenant_id = ?').run('default', id);
-  db.prepare('DELETE FROM tenants WHERE id = ?').run(id);
+  db.prepare('UPDATE users SET tenant_id = ? WHERE tenant_id = ?').run('default', tenantId);
+  db.prepare('DELETE FROM tenants WHERE id = ?').run(tenantId);
 
-  logAudit((req as any).user.id, 'TENANT_DELETE', req, `Deleted tenant: ${id}`);
-  res.json({ success: true });
+  logAudit((req as any).user.id, 'TENANT_DELETE', req, `Deleted tenant: ${tenantId}`);
+  res.json(message('Tenant deleted successfully'));
 });
 
 // GET /api/admin/sessions
@@ -354,7 +395,7 @@ router.get('/sessions', authenticateAdmin, (req, res) => {
     LEFT JOIN users u ON s.user_id = u.id
     ORDER BY s.last_active DESC
   `).all();
-  res.json(sessions);
+  res.json(success(sessions));
 });
 
 // DELETE /api/admin/sessions/:id
@@ -362,18 +403,19 @@ router.delete('/sessions/:id', authenticateAdmin, (req, res) => {
   const { id } = req.params;
 
   const session: any = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id);
-  if (!session) return res.status(404).json({ error: 'Session not found' });
+  if (!session) return res.status(404).json(error('Session not found', ErrorCode.RESOURCE_NOT_FOUND));
 
   db.prepare('UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ?').run(session.user_id);
   db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
 
   logAudit((req as any).user.id, 'ADMIN_SESSION_REVOKED', req, `Session ${id} revoked by admin`);
-  res.json({ message: 'Session revoked successfully' });
+  res.json(message('Session revoked successfully'));
 });
 
 // POST /api/admin/maintenance/cleanup-tokens
 router.post('/maintenance/cleanup-tokens', authenticateAdmin, (req, res) => {
-  res.json(cleanupExpiredTokens());
+  const result = cleanupExpiredTokens();
+  res.json(success(result, 'Token cleanup completed'));
 });
 
 export default router;

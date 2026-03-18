@@ -56,9 +56,9 @@ export default function Login({ setUser }: { setUser: (user: any) => void }) {
       body: JSON.stringify({ username, password, otp: otp || undefined, remember_me: rememberMe, trust_device: trustDevice })
     });
     
-    const data = await res.json();
+    const { data, code, message } = await res.json();
 
-    if (res.ok) {
+    if (code === 0) {
       localStorage.setItem('token', data.access_token);
       localStorage.setItem('refresh_token', data.refresh_token);
       if (data.session_id) {
