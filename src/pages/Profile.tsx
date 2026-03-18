@@ -85,8 +85,8 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
     try {
       const res = await authFetch('/api/user/sessions');
       if (res.ok) {
-        const result = await res.json();
-        setSessions(result.data || result);
+        const { data } = await res.json();
+        setSessions(data);
       }
     } catch (err) {
       console.error('Failed to fetch sessions');
@@ -97,8 +97,8 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
     try {
       const res = await authFetch('/api/user/account/delete-request');
       if (res.ok) {
-        const result = await res.json();
-        setDeletionRequest(result.data?.request || result.request || null);
+        const { data } = await res.json();
+        setDeletionRequest(data?.request || null);
       }
     } catch (err) {
       console.error('Failed to fetch deletion request');
@@ -248,8 +248,8 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ password })
         });
-        const data = await res.json();
-        setPasswordStrength(data);
+        const json = await res.json();
+        setPasswordStrength(json.data ?? json);
       } catch (err) {
         console.error('Failed to validate password');
       }
@@ -342,24 +342,24 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
   };
 
   return (
-    <div className="min-h-screen bg-zinc-50">
+    <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950">
       <AppHeader user={user} setUser={setUser} />
 
       <main className="max-w-4xl mx-auto px-4 py-12">
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-zinc-900">Account Settings</h1>
-          <p className="text-zinc-500">Manage your profile, security, and sessions</p>
+          <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">Account Settings</h1>
+          <p className="text-zinc-500 dark:text-zinc-400">Manage your profile, security, and sessions</p>
         </div>
 
         {/* Tabs */}
-        <div className="border-b border-zinc-200 mb-6">
+        <div className="border-b border-zinc-200 dark:border-zinc-700 mb-6">
           <nav className="-mb-px flex space-x-8">
             <button
               onClick={() => setActiveTab('profile')}
               className={`py-4 px-1 border-b-2 font-medium text-sm ${
                 activeTab === 'profile'
-                  ? 'border-indigo-500 text-indigo-600'
-                  : 'border-transparent text-zinc-500 hover:text-zinc-700 hover:border-zinc-300'
+                  ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
+                  : 'border-transparent text-zinc-500 hover:text-zinc-700 hover:border-zinc-300 dark:text-zinc-400 dark:hover:text-zinc-200'
               }`}
             >
               <User className="inline-block h-4 w-4 mr-2" />
@@ -369,8 +369,8 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
               onClick={() => setActiveTab('security')}
               className={`py-4 px-1 border-b-2 font-medium text-sm ${
                 activeTab === 'security'
-                  ? 'border-indigo-500 text-indigo-600'
-                  : 'border-transparent text-zinc-500 hover:text-zinc-700 hover:border-zinc-300'
+                  ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
+                  : 'border-transparent text-zinc-500 hover:text-zinc-700 hover:border-zinc-300 dark:text-zinc-400 dark:hover:text-zinc-200'
               }`}
             >
               <Shield className="inline-block h-4 w-4 mr-2" />
@@ -380,8 +380,8 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
               onClick={() => setActiveTab('sessions')}
               className={`py-4 px-1 border-b-2 font-medium text-sm ${
                 activeTab === 'sessions'
-                  ? 'border-indigo-500 text-indigo-600'
-                  : 'border-transparent text-zinc-500 hover:text-zinc-700 hover:border-zinc-300'
+                  ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
+                  : 'border-transparent text-zinc-500 hover:text-zinc-700 hover:border-zinc-300 dark:text-zinc-400 dark:hover:text-zinc-200'
               }`}
             >
               <Smartphone className="inline-block h-4 w-4 mr-2" />
@@ -391,13 +391,13 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
         </div>
 
         {message && (
-          <div className="mb-4 bg-green-50 border border-green-200 text-green-600 px-4 py-3 rounded-md text-sm">
+          <div className="mb-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-green-600 dark:text-green-400 px-4 py-3 rounded-md text-sm">
             {message}
           </div>
         )}
 
         {error && (
-          <div className="mb-4 bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-md text-sm">
+          <div className="mb-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 px-4 py-3 rounded-md text-sm">
             {error}
           </div>
         )}
@@ -414,19 +414,19 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
           {activeTab === 'profile' && (
             <div className="space-y-6">
               {/* Avatar Section */}
-              <div className="bg-white shadow rounded-lg p-6">
-                <h3 className="text-lg font-medium text-zinc-900 mb-4">Profile Picture</h3>
+              <div className="bg-white dark:bg-zinc-900 shadow rounded-lg p-6">
+                <h3 className="text-lg font-medium text-zinc-900 dark:text-white mb-4">Profile Picture</h3>
                 <div className="flex items-center gap-6">
                   <div className="relative">
                     {avatarUrl ? (
                       <img
                         src={avatarUrl}
                         alt="Avatar"
-                        className="h-20 w-20 rounded-full object-cover border-2 border-zinc-200"
+                        className="h-20 w-20 rounded-full object-cover border-2 border-zinc-200 dark:border-zinc-700"
                         onError={() => setAvatarUrl('')}
                       />
                     ) : (
-                      <div className="h-20 w-20 rounded-full bg-indigo-100 flex items-center justify-center border-2 border-zinc-200">
+                      <div className="h-20 w-20 rounded-full bg-indigo-100 dark:bg-indigo-900 flex items-center justify-center border-2 border-zinc-200 dark:border-zinc-700">
                         <User className="h-10 w-10 text-indigo-400" />
                       </div>
                     )}
@@ -443,7 +443,7 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
                       type="button"
                       disabled={avatarLoading}
                       onClick={() => fileInputRef.current?.click()}
-                      className="flex items-center py-2 px-3 border border-zinc-300 rounded-md text-sm font-medium text-zinc-700 bg-white hover:bg-zinc-50 disabled:opacity-50"
+                      className="flex items-center py-2 px-3 border border-zinc-300 dark:border-zinc-700 rounded-md text-sm font-medium text-zinc-700 dark:text-zinc-300 bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 disabled:opacity-50"
                     >
                       <Camera className="h-4 w-4 mr-2" />
                       Upload Photo
@@ -451,14 +451,14 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
                     <button
                       type="button"
                       onClick={() => setShowUrlInput(!showUrlInput)}
-                      className="flex items-center py-2 px-3 border border-zinc-300 rounded-md text-sm font-medium text-zinc-700 bg-white hover:bg-zinc-50"
+                      className="flex items-center py-2 px-3 border border-zinc-300 dark:border-zinc-700 rounded-md text-sm font-medium text-zinc-700 dark:text-zinc-300 bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700"
                     >
                       <Link className="h-4 w-4 mr-2" />
                       Use URL
                     </button>
                   </div>
                 </div>
-                <p className="mt-2 text-xs text-zinc-400">Accepted formats: JPG, PNG, WebP. Max size: 2MB.</p>
+                <p className="mt-2 text-xs text-zinc-400 dark:text-zinc-500">Accepted formats: JPG, PNG, WebP. Max size: 2MB.</p>
 
                 {showUrlInput && (
                   <form onSubmit={handleAvatarUrlSubmit} className="mt-4 flex gap-2">
@@ -467,7 +467,7 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
                       value={avatarUrlInput}
                       onChange={(e) => setAvatarUrlInput(e.target.value)}
                       placeholder="https://example.com/avatar.jpg"
-                      className="flex-1 px-3 py-2 border border-zinc-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+                      className="flex-1 px-3 py-2 border border-zinc-300 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-sm"
                     />
                     <button
                       type="submit"
@@ -481,45 +481,45 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
               </div>
 
               {/* Profile Info Form */}
-              <div className="bg-white shadow rounded-lg p-6">
+              <div className="bg-white dark:bg-zinc-900 shadow rounded-lg p-6">
                 <form onSubmit={handleProfileUpdate} className="space-y-6">
                   <div>
-                    <label className="block text-sm font-medium text-zinc-700">Username</label>
+                    <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">Username</label>
                     <input
                       type="text"
                       value={user.username}
                       disabled
-                      className="mt-1 block w-full px-3 py-2 border border-zinc-300 rounded-md shadow-sm bg-zinc-50 text-zinc-500 sm:text-sm"
+                      className="mt-1 block w-full px-3 py-2 border border-zinc-300 dark:border-zinc-700 rounded-md shadow-sm bg-zinc-50 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 sm:text-sm"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-zinc-700">Email</label>
+                    <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">Email</label>
                     <input
                       type="email"
                       value={user.email}
                       disabled
-                      className="mt-1 block w-full px-3 py-2 border border-zinc-300 rounded-md shadow-sm bg-zinc-50 text-zinc-500 sm:text-sm"
+                      className="mt-1 block w-full px-3 py-2 border border-zinc-300 dark:border-zinc-700 rounded-md shadow-sm bg-zinc-50 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 sm:text-sm"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-zinc-700">Full Name</label>
+                    <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">Full Name</label>
                     <input
                       type="text"
                       value={fullName}
                       onChange={(e) => setFullName(e.target.value)}
-                      className="mt-1 block w-full px-3 py-2 border border-zinc-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                      className="mt-1 block w-full px-3 py-2 border border-zinc-300 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-zinc-700">Phone</label>
+                    <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">Phone</label>
                     <input
                       type="tel"
                       value={phone}
                       onChange={(e) => setPhone(e.target.value)}
-                      className="mt-1 block w-full px-3 py-2 border border-zinc-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                      className="mt-1 block w-full px-3 py-2 border border-zinc-300 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
                     />
                   </div>
 
@@ -537,25 +537,25 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
               </div>
 
               {/* Account Deletion Section */}
-              <div className="bg-white shadow rounded-lg p-6 border border-red-100">
-                <h3 className="text-lg font-medium text-red-700 mb-1 flex items-center gap-2">
+              <div className="bg-white dark:bg-zinc-900 shadow rounded-lg p-6 border border-red-100 dark:border-red-900">
+                <h3 className="text-lg font-medium text-red-700 dark:text-red-400 mb-1 flex items-center gap-2">
                   <AlertTriangle className="h-5 w-5" />
                   Danger Zone
                 </h3>
-                <p className="text-sm text-zinc-500 mb-4">
+                <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
                   Requesting account deletion will schedule your account for permanent removal after a 30-day grace period.
                 </p>
 
                 {deletionRequest && deletionRequest.status === 'pending' && (
-                  <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-md">
-                    <p className="text-sm font-medium text-red-700">Account deletion is pending</p>
+                  <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
+                    <p className="text-sm font-medium text-red-700 dark:text-red-400">Account deletion is pending</p>
                     <p className="text-xs text-red-500 mt-1">
                       Scheduled for: {new Date(deletionRequest.scheduled_delete_at).toLocaleDateString()}
                     </p>
                     <button
                       onClick={handleCancelDeletion}
                       disabled={deletionLoading}
-                      className="mt-3 flex items-center py-2 px-3 border border-red-300 rounded-md text-sm font-medium text-red-700 bg-white hover:bg-red-50 disabled:opacity-50"
+                      className="mt-3 flex items-center py-2 px-3 border border-red-300 dark:border-red-700 rounded-md text-sm font-medium text-red-700 dark:text-red-400 bg-white dark:bg-zinc-800 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50"
                     >
                       <XCircle className="h-4 w-4 mr-2" />
                       Cancel Deletion Request
@@ -564,8 +564,8 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
                 )}
 
                 {deletionRequest && deletionRequest.status === 'cancelled' && (
-                  <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-md">
-                    <p className="text-sm text-green-700 flex items-center gap-2">
+                  <div className="mb-4 p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-md">
+                    <p className="text-sm text-green-700 dark:text-green-400 flex items-center gap-2">
                       <CheckCircle className="h-4 w-4" />
                       Previous deletion request was cancelled.
                     </p>
@@ -575,8 +575,8 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
                 {(!deletionRequest || deletionRequest.status === 'cancelled') && (
                   <>
                     {showDeleteConfirm ? (
-                      <div className="p-4 bg-red-50 border border-red-200 rounded-md">
-                        <p className="text-sm font-medium text-red-700 mb-3">
+                      <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
+                        <p className="text-sm font-medium text-red-700 dark:text-red-400 mb-3">
                           Are you sure? This will schedule your account for deletion in 30 days. You can cancel during this period.
                         </p>
                         <div className="flex gap-2">
@@ -590,7 +590,7 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
                           </button>
                           <button
                             onClick={() => setShowDeleteConfirm(false)}
-                            className="py-2 px-3 border border-zinc-300 rounded-md text-sm font-medium text-zinc-700 bg-white hover:bg-zinc-50"
+                            className="py-2 px-3 border border-zinc-300 dark:border-zinc-700 rounded-md text-sm font-medium text-zinc-700 dark:text-zinc-300 bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700"
                           >
                             Cancel
                           </button>
@@ -599,7 +599,7 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
                     ) : (
                       <button
                         onClick={() => setShowDeleteConfirm(true)}
-                        className="flex items-center py-2 px-4 border border-red-300 rounded-md shadow-sm text-sm font-medium text-red-700 bg-white hover:bg-red-50"
+                        className="flex items-center py-2 px-4 border border-red-300 dark:border-red-700 rounded-md shadow-sm text-sm font-medium text-red-700 dark:text-red-400 bg-white dark:bg-zinc-800 hover:bg-red-50 dark:hover:bg-red-900/20"
                       >
                         <Trash2 className="h-4 w-4 mr-2" />
                         Request Account Deletion
@@ -614,8 +614,8 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
           {/* Security Tab */}
           {activeTab === 'security' && (
             <div className="space-y-6">
-              <div className="bg-white shadow rounded-lg p-6">
-                <h3 className="text-lg font-medium text-zinc-900 mb-4">Two-Factor Authentication</h3>
+              <div className="bg-white dark:bg-zinc-900 shadow rounded-lg p-6">
+                <h3 className="text-lg font-medium text-zinc-900 dark:text-white mb-4">Two-Factor Authentication</h3>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center">
                     {user.otp_enabled ? (
@@ -623,35 +623,35 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
                     ) : (
                       <XCircle className="h-5 w-5 text-zinc-400 mr-2" />
                     )}
-                    <span className="text-sm text-zinc-700">
+                    <span className="text-sm text-zinc-700 dark:text-zinc-300">
                       {user.otp_enabled ? '2FA is enabled' : '2FA is not enabled'}
                     </span>
                   </div>
                   <button
                     onClick={() => navigate({ to: '/setup-otp' })}
-                    className="text-sm text-indigo-600 hover:text-indigo-500"
+                    className="text-sm text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
                   >
                     {user.otp_enabled ? 'Manage' : 'Enable'}
                   </button>
                 </div>
               </div>
 
-              <div className="bg-white shadow rounded-lg p-6">
-                <h3 className="text-lg font-medium text-zinc-900 mb-4">Change Password</h3>
+              <div className="bg-white dark:bg-zinc-900 shadow rounded-lg p-6">
+                <h3 className="text-lg font-medium text-zinc-900 dark:text-white mb-4">Change Password</h3>
                 <form onSubmit={handlePasswordChange} className="space-y-4">
                   <div>
-                    <label className="block text-sm font-medium text-zinc-700">Current Password</label>
+                    <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">Current Password</label>
                     <input
                       type="password"
                       value={currentPassword}
                       onChange={(e) => setCurrentPassword(e.target.value)}
                       required
-                      className="mt-1 block w-full px-3 py-2 border border-zinc-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                      className="mt-1 block w-full px-3 py-2 border border-zinc-300 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-zinc-700">New Password</label>
+                    <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">New Password</label>
                     <div className="relative">
                       <input
                         type={showPassword ? 'text' : 'password'}
@@ -661,7 +661,7 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
                           validatePassword(e.target.value);
                         }}
                         required
-                        className="mt-1 block w-full px-3 py-2 border border-zinc-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                        className="mt-1 block w-full px-3 py-2 border border-zinc-300 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
                       />
                       <button
                         type="button"
@@ -674,10 +674,10 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
                     {passwordStrength && (
                       <div className="mt-2">
                         <div className="flex items-center gap-2 mb-1">
-                          <div className="flex-1 h-1 bg-gray-200 rounded-full overflow-hidden">
+                          <div className="flex-1 h-1 bg-gray-200 dark:bg-zinc-700 rounded-full overflow-hidden">
                             <div className={`h-full ${getStrengthColor()} transition-all`} style={{ width: `${passwordStrength.score * 25}%` }} />
                           </div>
-                          <span className="text-xs text-zinc-500">
+                          <span className="text-xs text-zinc-500 dark:text-zinc-400">
                             {passwordStrength.score <= 1 ? 'Weak' : passwordStrength.score === 2 ? 'Fair' : passwordStrength.score === 3 ? 'Good' : 'Strong'}
                           </span>
                         </div>
@@ -691,13 +691,13 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-zinc-700">Confirm New Password</label>
+                    <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">Confirm New Password</label>
                     <input
                       type="password"
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
                       required
-                      className="mt-1 block w-full px-3 py-2 border border-zinc-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                      className="mt-1 block w-full px-3 py-2 border border-zinc-300 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
                     />
                   </div>
 
@@ -714,12 +714,12 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
                 </form>
               </div>
 
-              <div className="bg-white shadow rounded-lg p-6">
-                <h3 className="text-lg font-medium text-zinc-900 mb-4">Sign Out</h3>
-                <p className="text-sm text-zinc-500 mb-4">Sign out from your account on this device.</p>
+              <div className="bg-white dark:bg-zinc-900 shadow rounded-lg p-6">
+                <h3 className="text-lg font-medium text-zinc-900 dark:text-white mb-4">Sign Out</h3>
+                <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">Sign out from your account on this device.</p>
                 <button
                   onClick={handleLogout}
-                  className="flex items-center py-2 px-4 border border-zinc-300 rounded-md shadow-sm text-sm font-medium text-zinc-700 bg-white hover:bg-zinc-50"
+                  className="flex items-center py-2 px-4 border border-zinc-300 dark:border-zinc-700 rounded-md shadow-sm text-sm font-medium text-zinc-700 dark:text-zinc-300 bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700"
                 >
                   <LogOut className="h-4 w-4 mr-2" />
                   Sign Out
@@ -730,18 +730,18 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
 
           {/* Sessions Tab */}
           {activeTab === 'sessions' && (
-            <div className="bg-white shadow rounded-lg p-6">
-              <h3 className="text-lg font-medium text-zinc-900 mb-4">Active Sessions</h3>
+            <div className="bg-white dark:bg-zinc-900 shadow rounded-lg p-6">
+              <h3 className="text-lg font-medium text-zinc-900 dark:text-white mb-4">Active Sessions</h3>
               {sessions.length === 0 ? (
-                <p className="text-sm text-zinc-500">No active sessions</p>
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">No active sessions</p>
               ) : (
                 <div className="space-y-4">
                   {sessions.map((session) => (
-                    <div key={session.id} className="flex items-center justify-between p-4 border border-zinc-200 rounded-lg">
+                    <div key={session.id} className="flex items-center justify-between p-4 border border-zinc-200 dark:border-zinc-700 rounded-lg">
                       <div>
-                        <p className="text-sm font-medium text-zinc-900">{session.device_info || 'Unknown Device'}</p>
-                        <p className="text-xs text-zinc-500">IP: {session.ip_address}</p>
-                        <p className="text-xs text-zinc-500">Last active: {new Date(session.last_active).toLocaleString()}</p>
+                        <p className="text-sm font-medium text-zinc-900 dark:text-white">{session.device_info || 'Unknown Device'}</p>
+                        <p className="text-xs text-zinc-500 dark:text-zinc-400">IP: {session.ip_address}</p>
+                        <p className="text-xs text-zinc-500 dark:text-zinc-400">Last active: {new Date(session.last_active).toLocaleString()}</p>
                       </div>
                       <button
                         onClick={() => handleRevokeSession(session.id)}

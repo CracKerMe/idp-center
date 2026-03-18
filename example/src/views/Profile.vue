@@ -51,8 +51,8 @@ async function updateProfile() {
     })
     
     if (!response.ok) {
-      const { data } = await response.json()
-      throw new Error(data.error || 'Failed to update profile')
+      const json = await response.json()
+      throw new Error(json.error || 'Failed to update profile')
     }
     
     message.value = 'Profile updated successfully!'

@@ -25,7 +25,7 @@ export default function ClientsList() {
   const fetchClients = () => {
     authFetch('/api/admin/clients')
       .then(res => res.json())
-      .then(data => { setClients(data); setLoading(false); });
+      .then(json => { setClients(json.data ?? json); setLoading(false); });
   };
 
   useEffect(() => { fetchClients(); }, []);
@@ -94,9 +94,9 @@ export default function ClientsList() {
   if (loading) return <div>Loading clients...</div>;
 
   return (
-    <div className="bg-white shadow overflow-hidden sm:rounded-lg">
+    <div className="bg-white dark:bg-zinc-900 shadow overflow-hidden sm:rounded-lg">
       <div className="px-4 py-5 sm:px-6 flex justify-between items-center">
-        <h3 className="text-lg leading-6 font-medium text-zinc-900">OAuth Clients</h3>
+        <h3 className="text-lg leading-6 font-medium text-zinc-900 dark:text-white">OAuth Clients</h3>
         <button
           onClick={() => setShowCreateForm(!showCreateForm)}
           className="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700"
@@ -108,18 +108,18 @@ export default function ClientsList() {
 
       {/* New secret banner */}
       {rotatedSecret && (
-        <div className="border-t border-yellow-200 bg-yellow-50 px-4 py-4 sm:px-6">
-          <p className="text-sm font-medium text-yellow-800 mb-2">
+        <div className="border-t border-yellow-200 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-900/20 px-4 py-4 sm:px-6">
+          <p className="text-sm font-medium text-yellow-800 dark:text-yellow-400 mb-2">
             New secret for client <span className="font-mono">{rotatedSecret.clientId}</span> — copy it now, it won't be shown again.
           </p>
           <div className="flex items-center gap-2">
-            <code className="flex-1 bg-white border border-yellow-300 rounded px-3 py-1 text-sm font-mono break-all">
+            <code className="flex-1 bg-white dark:bg-zinc-800 border border-yellow-300 dark:border-yellow-700 rounded px-3 py-1 text-sm font-mono break-all dark:text-white">
               {showSecret ? rotatedSecret.secret : '•'.repeat(40)}
             </code>
-            <button onClick={() => setShowSecret(s => !s)} className="text-yellow-700 hover:text-yellow-900">
+            <button onClick={() => setShowSecret(s => !s)} className="text-yellow-700 dark:text-yellow-400 hover:text-yellow-900">
               {showSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
-            <button onClick={() => setRotatedSecret(null)} className="text-yellow-700 hover:text-yellow-900 text-xs underline">
+            <button onClick={() => setRotatedSecret(null)} className="text-yellow-700 dark:text-yellow-400 hover:text-yellow-900 text-xs underline">
               Dismiss
             </button>
           </div>
@@ -127,24 +127,24 @@ export default function ClientsList() {
       )}
 
       {showCreateForm && (
-        <div className="border-t border-zinc-200 px-4 py-5 sm:p-6 bg-zinc-50">
+        <div className="border-t border-zinc-200 dark:border-zinc-700 px-4 py-5 sm:p-6 bg-zinc-50 dark:bg-zinc-800">
           <form onSubmit={handleCreate} className="space-y-4 max-w-lg">
             <div>
-              <label className="block text-sm font-medium text-zinc-700">Client Name</label>
+              <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">Client Name</label>
               <input type="text" required value={newClient.client_name}
                 onChange={e => setNewClient({ ...newClient, client_name: e.target.value })}
-                className="mt-1 block w-full border border-zinc-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
+                className="mt-1 block w-full border border-zinc-300 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-zinc-700">Redirect URIs (comma separated)</label>
+              <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">Redirect URIs (comma separated)</label>
               <input type="text" required value={newClient.redirect_uris}
                 onChange={e => setNewClient({ ...newClient, redirect_uris: e.target.value })}
                 placeholder="http://localhost:3000/callback"
-                className="mt-1 block w-full border border-zinc-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
+                className="mt-1 block w-full border border-zinc-300 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
             </div>
             <div className="flex justify-end">
               <button type="button" onClick={() => setShowCreateForm(false)}
-                className="mr-3 bg-white py-2 px-4 border border-zinc-300 rounded-md shadow-sm text-sm font-medium text-zinc-700 hover:bg-zinc-50">
+                className="mr-3 bg-white dark:bg-zinc-800 py-2 px-4 border border-zinc-300 dark:border-zinc-700 rounded-md shadow-sm text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700">
                 Cancel
               </button>
               <button type="submit"
@@ -156,24 +156,24 @@ export default function ClientsList() {
         </div>
       )}
 
-      <div className="border-t border-zinc-200">
-        <table className="min-w-full divide-y divide-zinc-200">
-          <thead className="bg-zinc-50">
+      <div className="border-t border-zinc-200 dark:border-zinc-700">
+        <table className="min-w-full divide-y divide-zinc-200 dark:divide-zinc-700">
+          <thead className="bg-zinc-50 dark:bg-zinc-800">
             <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider">Name</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider">Client ID</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider">Redirect URIs</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider">Created</th>
-              <th className="px-6 py-3 text-right text-xs font-medium text-zinc-500 uppercase tracking-wider">Actions</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">Name</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">Client ID</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">Redirect URIs</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">Created</th>
+              <th className="px-6 py-3 text-right text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">Actions</th>
             </tr>
           </thead>
-          <tbody className="bg-white divide-y divide-zinc-200">
+          <tbody className="bg-white dark:bg-zinc-900 divide-y divide-zinc-200 dark:divide-zinc-700">
             {clients.map((client) => (
               <tr key={client.id}>
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-zinc-900">{client.client_name}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-zinc-500 font-mono">{client.client_id}</td>
-                <td className="px-6 py-4 text-sm text-zinc-500 break-all max-w-xs">{client.redirect_uris}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-zinc-500">
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-zinc-900 dark:text-white">{client.client_name}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-zinc-500 dark:text-zinc-400 font-mono">{client.client_id}</td>
+                <td className="px-6 py-4 text-sm text-zinc-500 dark:text-zinc-400 break-all max-w-xs">{client.redirect_uris}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-zinc-500 dark:text-zinc-400">
                   {format(new Date(client.created_at), 'MMM d, yyyy HH:mm')}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
@@ -203,29 +203,29 @@ export default function ClientsList() {
         <div className="fixed inset-0 z-50 overflow-y-auto">
           <div className="flex min-h-screen items-center justify-center px-4 pt-4 pb-20 text-center sm:block sm:p-0">
             <div className="fixed inset-0 bg-zinc-500 bg-opacity-75 transition-opacity" onClick={() => setEditingClient(null)} />
-            <div className="inline-block align-bottom bg-white rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-md sm:w-full sm:p-6 relative z-10">
+            <div className="inline-block align-bottom bg-white dark:bg-zinc-900 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-md sm:w-full sm:p-6 relative z-10">
               <form onSubmit={handleEdit}>
-                <h3 className="text-lg font-medium text-zinc-900 mb-4">Edit Client</h3>
+                <h3 className="text-lg font-medium text-zinc-900 dark:text-white mb-4">Edit Client</h3>
                 {actionError && (
-                  <div className="mb-4 bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-md text-sm">{actionError}</div>
+                  <div className="mb-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 px-4 py-3 rounded-md text-sm">{actionError}</div>
                 )}
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-sm font-medium text-zinc-700">Client Name</label>
+                    <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">Client Name</label>
                     <input type="text" required value={editForm.client_name}
                       onChange={e => setEditForm({ ...editForm, client_name: e.target.value })}
-                      className="mt-1 block w-full border border-zinc-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
+                      className="mt-1 block w-full border border-zinc-300 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-zinc-700">Redirect URIs (comma separated)</label>
+                    <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">Redirect URIs (comma separated)</label>
                     <textarea rows={3} required value={editForm.redirect_uris}
                       onChange={e => setEditForm({ ...editForm, redirect_uris: e.target.value })}
-                      className="mt-1 block w-full border border-zinc-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
+                      className="mt-1 block w-full border border-zinc-300 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm" />
                   </div>
                 </div>
                 <div className="mt-6 flex justify-end gap-3">
                   <button type="button" onClick={() => setEditingClient(null)}
-                    className="inline-flex justify-center rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm hover:bg-zinc-50">
+                    className="inline-flex justify-center rounded-md border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 shadow-sm hover:bg-zinc-50 dark:hover:bg-zinc-800">
                     Cancel
                   </button>
                   <button type="submit"

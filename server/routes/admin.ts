@@ -42,7 +42,7 @@ router.get('/users', authenticateAdmin, validate({ query: listUsersQuerySchema }
   }
   if (is_active !== undefined) {
     whereClause += ' AND is_active = ?';
-    params.push(is_active ? 1 : 0);
+    params.push(is_active);
   }
 
   const countQuery = `SELECT COUNT(*) as total FROM users ${whereClause}`;
@@ -291,7 +291,8 @@ router.get('/audit', authenticateAdmin, (req, res) => {
 
 // GET /api/admin/audit/filter
 router.get('/audit/filter', authenticateAdmin, (req, res) => {
-  const { action, user_id, tenant_id, start_date, end_date, limit = 100 } = req.query;
+  const { action, user_id, tenant_id, start_date, end_date, limit } = req.query;
+  const limitNum = Math.min(500, Math.max(1, parseInt(limit as string) || 100));
 
   let query = `
     SELECT a.*, u.username, t.name as tenant_name
@@ -309,7 +310,7 @@ router.get('/audit/filter', authenticateAdmin, (req, res) => {
   if (end_date) { query += ' AND a.created_at <= ?'; params.push(end_date); }
 
   query += ' ORDER BY a.created_at DESC LIMIT ?';
-  params.push(parseInt(limit as string));
+  params.push(limitNum);
 
   res.json(success(db.prepare(query).all(...params)));
 });

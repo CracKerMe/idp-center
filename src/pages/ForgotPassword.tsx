@@ -23,8 +23,8 @@ export default function ForgotPassword() {
       if (res.ok) {
         setSent(true);
       } else {
-        const data = await res.json();
-        setError(data.error || 'Failed to request password reset');
+        const json = await res.json();
+        setError(json.error || 'Failed to request password reset');
       }
     } catch {
       setError('Network error');
@@ -34,18 +34,18 @@ export default function ForgotPassword() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <div className="flex justify-center">
-          <Shield className="h-12 w-12 text-indigo-600" />
+          <Shield className="h-12 w-12 text-indigo-600 dark:text-indigo-400" />
         </div>
-        <h2 className="mt-6 text-center text-3xl font-extrabold text-zinc-900">
+        <h2 className="mt-6 text-center text-3xl font-extrabold text-zinc-900 dark:text-white">
           {sent ? 'Check your email' : 'Reset your password'}
         </h2>
       </div>
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
+        <div className="bg-white dark:bg-zinc-900 py-8 px-4 shadow sm:rounded-lg sm:px-10">
           {sent ? (
             <div className="text-center">
               <div className="flex justify-center mb-4">
@@ -54,10 +54,10 @@ export default function ForgotPassword() {
                   <CheckCircle className="h-5 w-5 text-green-500 absolute -bottom-1 -right-1 bg-white rounded-full" />
                 </div>
               </div>
-              <p className="text-sm text-zinc-600 mb-2">
+              <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-2">
                 We've sent a password reset link to <strong>{email}</strong>.
               </p>
-              <p className="text-sm text-zinc-500 mb-6">
+              <p className="text-sm text-zinc-500 dark:text-zinc-500 mb-6">
                 Click the link in the email to set a new password. The link expires in 1 hour.
               </p>
               <button
@@ -74,18 +74,18 @@ export default function ForgotPassword() {
                   {error}
                 </div>
               )}
-              <p className="text-sm text-zinc-600 text-center">
+              <p className="text-sm text-zinc-600 dark:text-zinc-400 text-center">
                 Enter your email address and we'll send you a link to reset your password.
               </p>
               <div>
-                <label className="block text-sm font-medium text-zinc-700">Email address</label>
+                <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">Email address</label>
                 <div className="mt-1">
                   <input
                     type="email"
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="appearance-none block w-full px-3 py-2 border border-zinc-300 rounded-md shadow-sm placeholder-zinc-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                    className="appearance-none block w-full px-3 py-2 border border-zinc-300 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white rounded-md shadow-sm placeholder-zinc-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
                   />
                 </div>
               </div>
@@ -99,7 +99,7 @@ export default function ForgotPassword() {
                 </button>
               </div>
               <div className="mt-6 text-center">
-                <Link to="/login" className="inline-flex items-center text-sm font-medium text-indigo-600 hover:text-indigo-500">
+                <Link to="/login" className="inline-flex items-center text-sm font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400">
                   <ArrowLeft className="h-4 w-4 mr-1" />
                   Back to sign in
                 </Link>

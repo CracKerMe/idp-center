@@ -102,8 +102,8 @@ export default function App() {
             localStorage.removeItem('session_id');
             setUser(null);
           } else if (res.ok) {
-            const data = await res.json();
-            if (data) setUser(data.data || data);
+            const { data } = await res.json();
+            if (data) setUser(data);
           }
         } catch {
           // ignore

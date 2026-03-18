@@ -67,7 +67,7 @@ export const listUsersQuerySchema = z.object({
   pageSize: commonSchemas.pageSize,
   search: z.string().optional(),
   tenant_id: z.string().optional(),
-  is_active: z.coerce.boolean().optional(),
+  is_active: z.enum(['0', '1', 'true', 'false']).transform(v => (v === '1' || v === 'true' ? 1 : 0)).optional(),
 });
 
 export type ListUsersQuery = z.infer<typeof listUsersQuerySchema>;

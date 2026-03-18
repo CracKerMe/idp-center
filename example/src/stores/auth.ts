@@ -44,18 +44,19 @@ export const useAuthStore = defineStore('auth', () => {
         body: JSON.stringify({ username, password, otp })
       })
 
-      const { data } = await response.json()
-      console.log('Login response:', data)
+      const json = await response.json()
+      const data = json.data
+      console.log('Login response:', json)
       console.log('Response status:', response.status)
-      console.log('access_token:', data.access_token)
-      console.log('refresh_token:', data.refresh_token)
-      console.log('user:', data.user)
+      console.log('access_token:', data?.access_token)
+      console.log('refresh_token:', data?.refresh_token)
+      console.log('user:', data?.user)
 
       if (!response.ok) {
-        if (data.requireOtp) {
+        if (data?.requireOtp) {
           throw new Error('OTP_REQUIRED')
         }
-        throw new Error(data.error || 'Login failed')
+        throw new Error(json.error || 'Login failed')
       }
 
       // Store tokens
@@ -120,7 +121,7 @@ export const useAuthStore = defineStore('auth', () => {
       const response = await http.get('/auth/me')
 
       if (response.status === 200) {
-        user.value = response.data
+        user.value = response.data.data ?? response.data
       } else {
         logout()
       }
@@ -185,10 +186,11 @@ export const useAuthStore = defineStore('auth', () => {
         body: JSON.stringify({ refresh_token: refreshToken })
       })
 
-      const { data } = await response.json()
+      const json = await response.json()
+      const data = json.data
 
       if (!response.ok) {
-        console.error('Token refresh failed:', data.error)
+        console.error('Token refresh failed:', json.error)
         // Clear tokens on refresh failure
         logout()
         return false
@@ -218,7 +220,7 @@ export const useAuthStore = defineStore('auth', () => {
   async function getSessions() {
     try {
       const response = await http.get('/user/sessions')
-      return response.data
+      return response.data.data ?? response.data
     } catch (error) {
       console.error('Failed to fetch sessions:', error)
       throw error

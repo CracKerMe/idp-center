@@ -33,7 +33,7 @@ export default function AdminLayout({ user, setUser }: { user: any, setUser: (us
   ];
 
   return (
-    <div className="min-h-screen bg-zinc-100 flex">
+    <div className="min-h-screen bg-zinc-100 dark:bg-zinc-950 flex">
       {/* Sidebar */}
       <div className="w-64 bg-zinc-900 text-white flex flex-col">
         <div className="h-16 flex items-center px-6 bg-zinc-950 border-b border-zinc-800">
@@ -84,13 +84,13 @@ export default function AdminLayout({ user, setUser }: { user: any, setUser: (us
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        <header className="bg-white shadow-sm z-10">
+        <header className="bg-white dark:bg-zinc-900 shadow-sm z-10">
           <div className="max-w-7xl mx-auto py-4 px-4 sm:px-6 lg:px-8 flex justify-between items-center">
-            <h1 className="text-2xl font-semibold text-zinc-900">
+            <h1 className="text-2xl font-semibold text-zinc-900 dark:text-white">
               {navigation.find(n => n.href === location.pathname)?.name || 'Dashboard'}
             </h1>
             <div className="flex items-center">
-              <span className="text-sm text-zinc-500">Logged in as <span className="font-medium text-zinc-900">{user.username}</span></span>
+              <span className="text-sm text-zinc-500 dark:text-zinc-400">Logged in as <span className="font-medium text-zinc-900 dark:text-white">{user.username}</span></span>
             </div>
           </div>
         </header>

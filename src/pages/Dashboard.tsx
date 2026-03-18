@@ -4,22 +4,22 @@ import AppHeader from '../components/AppHeader';
 
 export default function Dashboard({ user, setUser }: { user: any, setUser: (user: any) => void }) {
   return (
-    <div className="min-h-screen bg-zinc-50">
+    <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950">
       <AppHeader user={user} setUser={setUser} />
 
       <main className="max-w-7xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
-        <div className="bg-white shadow overflow-hidden sm:rounded-lg">
+        <div className="bg-white dark:bg-zinc-900 shadow overflow-hidden sm:rounded-lg">
           <div className="px-4 py-5 sm:px-6">
-            <h3 className="text-lg leading-6 font-medium text-zinc-900">Account Security</h3>
-            <p className="mt-1 max-w-2xl text-sm text-zinc-500">Manage your security settings and two-factor authentication.</p>
+            <h3 className="text-lg leading-6 font-medium text-zinc-900 dark:text-white">Account Security</h3>
+            <p className="mt-1 max-w-2xl text-sm text-zinc-500 dark:text-zinc-400">Manage your security settings and two-factor authentication.</p>
           </div>
-          <div className="border-t border-zinc-200 px-4 py-5 sm:p-0">
-            <dl className="sm:divide-y sm:divide-zinc-200">
+          <div className="border-t border-zinc-200 dark:border-zinc-700 px-4 py-5 sm:p-0">
+            <dl className="sm:divide-y sm:divide-zinc-200 dark:sm:divide-zinc-700">
               <div className="py-4 sm:py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
-                <dt className="text-sm font-medium text-zinc-500 flex items-center">
+                <dt className="text-sm font-medium text-zinc-500 dark:text-zinc-400 flex items-center">
                   Two-Factor Authentication (2FA)
                 </dt>
-                <dd className="mt-1 text-sm text-zinc-900 sm:mt-0 sm:col-span-2 flex items-center justify-between">
+                <dd className="mt-1 text-sm text-zinc-900 dark:text-white sm:mt-0 sm:col-span-2 flex items-center justify-between">
                   <div className="flex items-center">
                     {user.otp_enabled ? (
                       <>

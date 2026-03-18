@@ -43,10 +43,10 @@ export default function DashboardStats() {
     return (
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
         {[...Array(6)].map((_, i) => (
-          <div key={i} className="bg-white overflow-hidden shadow rounded-lg animate-pulse">
+          <div key={i} className="bg-white dark:bg-zinc-900 overflow-hidden shadow rounded-lg animate-pulse">
             <div className="p-5">
-              <div className="h-4 bg-zinc-200 rounded w-1/2 mb-4"></div>
-              <div className="h-8 bg-zinc-200 rounded w-3/4"></div>
+              <div className="h-4 bg-zinc-200 dark:bg-zinc-700 rounded w-1/2 mb-4"></div>
+              <div className="h-8 bg-zinc-200 dark:bg-zinc-700 rounded w-3/4"></div>
             </div>
           </div>
         ))}
@@ -101,7 +101,7 @@ export default function DashboardStats() {
 
   return (
     <div>
-      <h2 className="text-lg font-medium text-zinc-900 mb-4">System Overview</h2>
+      <h2 className="text-lg font-medium text-zinc-900 dark:text-white mb-4">System Overview</h2>
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
         {statCards.map((card, index) => (
           <motion.div
@@ -109,7 +109,7 @@ export default function DashboardStats() {
             initial={{ opacity: 0, y: 18, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             transition={{ duration: 0.28, delay: index * 0.06, ease: 'easeOut' }}
-            className="bg-white overflow-hidden shadow rounded-lg"
+            className="bg-white dark:bg-zinc-900 overflow-hidden shadow rounded-lg"
           >
             <div className="p-5">
               <div className="flex items-center">
@@ -118,18 +118,18 @@ export default function DashboardStats() {
                 </div>
                 <div className="ml-5 w-0 flex-1">
                   <dl>
-                    <dt className="text-sm font-medium text-zinc-500 truncate">{card.name}</dt>
+                    <dt className="text-sm font-medium text-zinc-500 dark:text-zinc-400 truncate">{card.name}</dt>
                     <dd className="flex items-baseline">
-                      <div className="text-2xl font-semibold text-zinc-900">{card.value.toLocaleString()}</div>
+                      <div className="text-2xl font-semibold text-zinc-900 dark:text-white">{card.value.toLocaleString()}</div>
                     </dd>
                   </dl>
                 </div>
               </div>
             </div>
             {card.href && (
-              <div className="bg-zinc-50 px-5 py-3">
+              <div className="bg-zinc-50 dark:bg-zinc-800 px-5 py-3">
                 <div className="text-sm">
-                  <a href={card.href} className="font-medium text-indigo-700 hover:text-indigo-900">
+                  <a href={card.href} className="font-medium text-indigo-700 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300">
                     View all
                   </a>
                 </div>
@@ -144,28 +144,28 @@ export default function DashboardStats() {
         initial={{ opacity: 0, y: 24 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, delay: 0.42, ease: 'easeOut' }}
-        className="mt-8 bg-white shadow rounded-lg p-6"
+        className="mt-8 bg-white dark:bg-zinc-900 shadow rounded-lg p-6"
       >
-        <h3 className="text-lg font-medium text-zinc-900 mb-4">
+        <h3 className="text-lg font-medium text-zinc-900 dark:text-white mb-4">
           <TrendingUp className="inline h-5 w-5 mr-2" />
           Last 24 Hours Activity
         </h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="border border-zinc-200 rounded-lg p-4">
+          <div className="border border-zinc-200 dark:border-zinc-700 rounded-lg p-4">
             <div className="flex items-center">
               <LogIn className="h-8 w-8 text-green-500" />
               <div className="ml-4">
-                <p className="text-sm font-medium text-zinc-500">Successful Logins</p>
-                <p className="text-2xl font-semibold text-zinc-900">{stats?.last24h?.logins || 0}</p>
+                <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">Successful Logins</p>
+                <p className="text-2xl font-semibold text-zinc-900 dark:text-white">{stats?.last24h?.logins || 0}</p>
               </div>
             </div>
           </div>
-          <div className="border border-zinc-200 rounded-lg p-4">
+          <div className="border border-zinc-200 dark:border-zinc-700 rounded-lg p-4">
             <div className="flex items-center">
               <UserPlus className="h-8 w-8 text-blue-500" />
               <div className="ml-4">
-                <p className="text-sm font-medium text-zinc-500">New Registrations</p>
-                <p className="text-2xl font-semibold text-zinc-900">{stats?.last24h?.registrations || 0}</p>
+                <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">New Registrations</p>
+                <p className="text-2xl font-semibold text-zinc-900 dark:text-white">{stats?.last24h?.registrations || 0}</p>
               </div>
             </div>
           </div>

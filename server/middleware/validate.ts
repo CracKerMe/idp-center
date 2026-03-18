@@ -24,6 +24,8 @@ export function validate(schema: ValidationSchema) {
       const result = schema.body.safeParse(req.body);
       if (!result.success) {
         errors.body = formatZodErrors(result.error);
+      } else {
+        req.body = result.data;
       }
     }
 
@@ -32,6 +34,8 @@ export function validate(schema: ValidationSchema) {
       const result = schema.query.safeParse(req.query);
       if (!result.success) {
         errors.query = formatZodErrors(result.error);
+      } else {
+        req.query = result.data as any;
       }
     }
 
@@ -40,6 +44,8 @@ export function validate(schema: ValidationSchema) {
       const result = schema.params.safeParse(req.params);
       if (!result.success) {
         errors.params = formatZodErrors(result.error);
+      } else {
+        req.params = result.data as any;
       }
     }
 

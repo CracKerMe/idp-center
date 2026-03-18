@@ -92,7 +92,8 @@ http.interceptors.response.use(
           refresh_token: refreshToken
         })
         
-        const { access_token, refresh_token } = response.data
+        const responseData = response.data.data ?? response.data
+        const { access_token, refresh_token } = responseData
         
         // 更新存储的 tokens
         localStorage.setItem('token', access_token)
