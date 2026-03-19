@@ -134,3 +134,49 @@ export async function authFetch(url: string, options: FetchOptions = {}): Promis
 export function isAuthError(response: Response): boolean {
   return response.status === 401 || response.status === 403;
 }
+
+/**
+ * API统一响应格式
+ */
+export interface ApiResponse<T = unknown> {
+  code?: number | string;
+  data?: T;
+  message?: string;
+  error?: string;
+}
+
+/**
+ * 解析API响应，统一处理响应格式
+ * @param response - fetch Response对象
+ * @returns 解析后的响应数据，包含 code, data, message, error
+ * @throws 当响应无法解析为JSON时抛出错误
+ */
+export async function parseApiResponse<T = unknown>(response: Response): Promise<ApiResponse<T>> {
+  const result: ApiResponse<T> = await response.json();
+  return result;
+}
+
+/**
+ * 检查API响应是否成功
+ * @param result - 解析后的API响应
+ * @returns 是否成功（code === 0）
+ */
+export function isSuccess(result: ApiResponse): boolean {
+  return result.code === 0;
+}
+
+/**
+ * 获取API响应的错误消息
+ * @param result - 解析后的API响应
+ * @returns 错误消息字符串
+ */
+export function getErrorMessage(result: ApiResponse): string {
+  return result.error || result.message || '操作失败';
+}
+
+/**
+ * 辅助函数：检查结果是否失败
+ */
+export function isError(result: ApiResponse): boolean {
+  return !isSuccess(result);
+}

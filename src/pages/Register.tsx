@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Link } from '@tanstack/react-router';
 import { Shield, XCircle, Mail } from 'lucide-react';
+import { parseApiResponse, isSuccess, getErrorMessage } from '../utils/fetch';
 
 interface PasswordStrength {
   score: number;
@@ -27,8 +28,10 @@ export default function Register() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ password: pwd })
         });
-        const { data } = await res.json();
-        setPasswordStrength(data);
+        const result = await parseApiResponse<PasswordStrength>(res);
+        if (isSuccess(result) && result.data) {
+          setPasswordStrength(result.data);
+        }
       } catch {
         // ignore
       }
@@ -61,11 +64,11 @@ export default function Register() {
       body: JSON.stringify({ username, email, password })
     });
 
-    if (res.ok) {
+    const result = await parseApiResponse(res);
+    if (isSuccess(result)) {
       setRegistered(true);
     } else {
-      const json = await res.json();
-      setError(json.error || 'Registration failed');
+      setError(getErrorMessage(result));
     }
   };
 

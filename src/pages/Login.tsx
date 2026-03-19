@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { Shield } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
+import { parseApiResponse, isSuccess, getErrorMessage } from '../utils/fetch';
 
 export default function Login({ setUser }: { setUser: (user: any) => void }) {
   const [username, setUsername] = useState('');
@@ -27,20 +28,42 @@ export default function Login({ setUser }: { setUser: (user: any) => void }) {
   // Check if GitHub OAuth is enabled
   useEffect(() => {
     fetch('/api/auth/github/config')
-      .then(res => res.json())
-      .then(json => setGithubEnabled(json.data?.enabled ?? json.enabled ?? false))
+      .then(res => parseApiResponse<{ enabled: boolean }>(res))
+      .then(result => {
+        if (isSuccess(result) && result.data) {
+          setGithubEnabled(result.data.enabled ?? false);
+        } else {
+          setGithubEnabled(false);
+        }
+      })
       .catch(() => setGithubEnabled(false));
   }, []);
+
+  const handleGitHubLoginClick = () => {
+    const redirect = searchParams.redirect;
+    const safeRedirect =
+      typeof redirect === 'string' &&
+      redirect.startsWith('/') &&
+      !redirect.startsWith('//')
+        ? redirect
+        : '/';
+    localStorage.setItem('github_post_login_redirect', safeRedirect);
+  };
 
   const handleResendVerification = async () => {
     setResendStatus('sending');
     try {
-      await fetch('/api/auth/email/resend-public', {
+      const res = await fetch('/api/auth/email/resend-public', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username })
       });
-      setResendStatus('sent');
+      const result = await parseApiResponse(res);
+      if (isSuccess(result)) {
+        setResendStatus('sent');
+      } else {
+        setResendStatus('idle');
+      }
     } catch {
       setResendStatus('idle');
     }
@@ -55,16 +78,25 @@ export default function Login({ setUser }: { setUser: (user: any) => void }) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password, otp: otp || undefined, remember_me: rememberMe, trust_device: trustDevice })
     });
-    
-    const { data, code, error: apiError } = await res.json();
+
+    const result = await parseApiResponse<{
+      access_token?: string;
+      refresh_token?: string;
+      session_id?: string;
+      device_trusted?: boolean;
+      user?: any;
+      requireOtp?: boolean;
+      unlock_at?: string;
+    }>(res);
+    const { data, code, error: apiError } = result;
 
     if (code === 0) {
-      localStorage.setItem('token', data.access_token);
-      localStorage.setItem('refresh_token', data.refresh_token);
-      if (data.session_id) {
-        localStorage.setItem('session_id', data.session_id);
+      localStorage.setItem('token', data!.access_token!);
+      localStorage.setItem('refresh_token', data!.refresh_token!);
+      if (data!.session_id) {
+        localStorage.setItem('session_id', data!.session_id);
       }
-      setUser(data.user);
+      setUser(data!.user);
       const redirect = searchParams.redirect;
       if (redirect && typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//')) {
         // Hash mode: navigate using hash
@@ -245,6 +277,7 @@ export default function Login({ setUser }: { setUser: (user: any) => void }) {
               <div className="mt-4">
                 <a
                   href="/api/auth/github"
+                  onClick={handleGitHubLoginClick}
                   data-testid="github-login-button"
                   className="w-full flex justify-center items-center gap-2 py-2 px-4 border border-zinc-300 dark:border-zinc-700 rounded-md shadow-sm text-sm font-medium text-zinc-700 dark:text-zinc-300 bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                 >

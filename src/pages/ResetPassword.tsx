@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { Shield, Eye, EyeOff, CheckCircle, XCircle, ArrowLeft } from 'lucide-react';
+import { parseApiResponse, isSuccess, getErrorMessage } from '../utils/fetch';
 
 interface PasswordStrength {
   score: number;
@@ -27,13 +28,25 @@ export default function ResetPassword() {
       return;
     }
     // Auto-verify token on mount
-    fetch('/api/auth/password/reset-verify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token }),
-    })
-      .then((res) => (res.ok ? setStep('reset') : res.json().then((d) => { throw new Error(d.error || 'Invalid token'); })))
-      .catch((err) => { setError(err.message); setStep('error'); });
+    (async () => {
+      try {
+        const res = await fetch('/api/auth/password/reset-verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token }),
+        });
+        const result = await parseApiResponse(res);
+        if (isSuccess(result)) {
+          setStep('reset');
+        } else {
+          setError(getErrorMessage(result));
+          setStep('error');
+        }
+      } catch (err: any) {
+        setError(err.message || 'Invalid token');
+        setStep('error');
+      }
+    })();
   }, [token]);
 
   const validatePassword = async (password: string) => {
@@ -43,8 +56,10 @@ export default function ResetPassword() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password }),
       });
-      const json = await res.json();
-      setPasswordStrength(json.data ?? json);
+      const result = await parseApiResponse<PasswordStrength>(res);
+      if (isSuccess(result) && result.data) {
+        setPasswordStrength(result.data);
+      }
     } catch {}
   };
 
@@ -61,9 +76,11 @@ export default function ResetPassword() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token, new_password: newPassword }),
       });
-      if (res.ok) { setStep('success'); } else {
-        const data = await res.json();
-        setError(data.error || 'Failed to reset password');
+      const result = await parseApiResponse(res);
+      if (isSuccess(result)) {
+        setStep('success');
+      } else {
+        setError(getErrorMessage(result));
       }
     } catch { setError('Network error'); } finally { setLoading(false); }
   };

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import { Plus, Edit, Ban, CheckCircle, KeyRound, Trash2 } from 'lucide-react';
-import { authFetch } from '../../utils/fetch';
+import { authFetch, parseApiResponse, isSuccess, getErrorMessage } from '../../utils/fetch';
 
 interface User {
   id: string;
@@ -25,8 +25,13 @@ export default function UsersList() {
 
   const fetchUsers = () => {
     authFetch('/api/admin/users')
-      .then(res => res.json())
-      .then(json => { setUsers(json.data.items || []); setLoading(false); });
+      .then(res => parseApiResponse<{ items: User[]; total: number; page: number; pageSize: number; totalPages: number }>(res))
+      .then(result => {
+        if (isSuccess(result) && result.data) {
+          setUsers(result.data.items || []);
+        }
+        setLoading(false);
+      });
   };
 
   useEffect(() => { fetchUsers(); }, []);
@@ -39,13 +44,13 @@ export default function UsersList() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newUser)
     });
-    if (res.ok) {
+    const result = await parseApiResponse(res);
+    if (isSuccess(result)) {
       setShowCreateForm(false);
       setNewUser({ username: '', email: '', password: '', is_admin: false });
       fetchUsers();
     } else {
-      const data = await res.json();
-      setError(data.error || 'Failed to create user');
+      setError(getErrorMessage(result));
     }
   };
 
@@ -64,12 +69,12 @@ export default function UsersList() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(editForm)
     });
-    if (res.ok) {
+    const result = await parseApiResponse(res);
+    if (isSuccess(result)) {
       setEditingUser(null);
       fetchUsers();
     } else {
-      const result = await res.json();
-      setActionError(result.error || 'Failed to update user');
+      setActionError(getErrorMessage(result));
     }
   };
 
@@ -78,16 +83,18 @@ export default function UsersList() {
     const res = await authFetch(`/api/admin/users/${user.id}/ban`, {
       method: 'POST',
     });
-    if (res.ok) fetchUsers();
-    else alert('Failed to ban user');
+    const result = await parseApiResponse(res);
+    if (isSuccess(result)) fetchUsers();
+    else alert(getErrorMessage(result));
   };
 
   const handleUnban = async (user: User) => {
     const res = await authFetch(`/api/admin/users/${user.id}/unban`, {
       method: 'POST',
     });
-    if (res.ok) fetchUsers();
-    else alert('Failed to unban user');
+    const result = await parseApiResponse(res);
+    if (isSuccess(result)) fetchUsers();
+    else alert(getErrorMessage(result));
   };
 
   const handleResetPassword = async (user: User) => {
@@ -95,8 +102,9 @@ export default function UsersList() {
     const res = await authFetch(`/api/admin/users/${user.id}/reset-password`, {
       method: 'POST',
     });
-    if (res.ok) alert('Password reset email sent.');
-    else alert('Failed to reset password');
+    const result = await parseApiResponse(res);
+    if (isSuccess(result)) alert('Password reset email sent.');
+    else alert(getErrorMessage(result));
   };
 
   const handleDelete = async (user: User) => {
@@ -104,8 +112,9 @@ export default function UsersList() {
     const res = await authFetch(`/api/admin/users/${user.id}`, {
       method: 'DELETE',
     });
-    if (res.ok) fetchUsers();
-    else alert('Failed to delete user');
+    const result = await parseApiResponse(res);
+    if (isSuccess(result)) fetchUsers();
+    else alert(getErrorMessage(result));
   };
 
   if (loading) return <div>Loading users...</div>;

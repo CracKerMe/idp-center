@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { format } from 'date-fns';
 import { Search, ChevronLeft, ChevronRight } from 'lucide-react';
-import { authFetch } from '../../utils/fetch';
+import { authFetch, parseApiResponse, isSuccess } from '../../utils/fetch';
 
 const ACTION_OPTIONS = [
   '', 'LOGIN_SUCCESS', 'LOGIN_FAILED', 'LOGOUT', 'REGISTER',
@@ -36,8 +36,9 @@ export default function AuditLogs() {
     if (currentFilters.end_date) params.set('end_date', currentFilters.end_date);
 
     const res = await authFetch(`/api/admin/audit?${params}`);
-    if (res.ok) {
-      const { data } = await res.json();
+    const result = await parseApiResponse<any>(res);
+    if (isSuccess(result) && result.data) {
+      const data = result.data;
       // Support both array response (legacy) and paginated { data, pagination }
       if (Array.isArray(data)) {
         setLogs(data);

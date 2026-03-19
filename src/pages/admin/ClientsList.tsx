@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import { Plus, Edit, Trash2, RefreshCw, Eye, EyeOff } from 'lucide-react';
-import { authFetch } from '../../utils/fetch';
+import { authFetch, parseApiResponse, isSuccess, getErrorMessage } from '../../utils/fetch';
 
 interface Client {
   id: string;
@@ -24,8 +24,13 @@ export default function ClientsList() {
 
   const fetchClients = () => {
     authFetch('/api/admin/clients')
-      .then(res => res.json())
-      .then(json => { setClients(json.data ?? json); setLoading(false); });
+      .then(res => parseApiResponse<any[]>(res))
+      .then(result => {
+        if (isSuccess(result) && result.data) {
+          setClients(Array.isArray(result.data) ? result.data : (result.data as any)?.items || []);
+        }
+        setLoading(false);
+      });
   };
 
   useEffect(() => { fetchClients(); }, []);
@@ -37,7 +42,8 @@ export default function ClientsList() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newClient)
     });
-    if (res.ok) {
+    const result = await parseApiResponse(res);
+    if (isSuccess(result)) {
       setShowCreateForm(false);
       setNewClient({ client_name: '', redirect_uris: '' });
       fetchClients();
@@ -59,12 +65,12 @@ export default function ClientsList() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(editForm)
     });
-    if (res.ok) {
+    const result = await parseApiResponse(res);
+    if (isSuccess(result)) {
       setEditingClient(null);
       fetchClients();
     } else {
-      const data = await res.json();
-      setActionError(data.error || 'Failed to update client');
+      setActionError(getErrorMessage(result));
     }
   };
 
@@ -73,8 +79,9 @@ export default function ClientsList() {
     const res = await authFetch(`/api/admin/clients/${client.id}`, {
       method: 'DELETE',
     });
-    if (res.ok) fetchClients();
-    else alert('Failed to delete client');
+    const result = await parseApiResponse(res);
+    if (isSuccess(result)) fetchClients();
+    else alert(getErrorMessage(result));
   };
 
   const handleRotateSecret = async (client: Client) => {
@@ -82,12 +89,12 @@ export default function ClientsList() {
     const res = await authFetch(`/api/admin/clients/${client.id}/rotate-secret`, {
       method: 'POST',
     });
-    if (res.ok) {
-      const result = await res.json();
-      setRotatedSecret({ clientId: client.client_id, secret: result.data?.client_secret || result.client_secret });
+    const result = await parseApiResponse<{ client_secret: string }>(res);
+    if (isSuccess(result) && result.data) {
+      setRotatedSecret({ clientId: client.client_id, secret: result.data.client_secret });
       setShowSecret(false);
     } else {
-      alert('Failed to rotate secret');
+      alert(getErrorMessage(result));
     }
   };
 

@@ -3,7 +3,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { User, Lock, Smartphone, LogOut, Trash2, Shield, Eye, EyeOff, CheckCircle, XCircle, Save, Camera, Link, AlertTriangle } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import AppHeader from '../components/AppHeader';
-import { authFetch } from '../utils/fetch';
+import { authFetch, parseApiResponse, isSuccess, getErrorMessage } from '../utils/fetch';
 
 interface UserInfo {
   id: string;
@@ -85,8 +85,10 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
     try {
       const res = await authFetch('/api/user/sessions');
       if (res.ok) {
-        const { data } = await res.json();
-        setSessions(data);
+        const result = await parseApiResponse<Session[]>(res);
+        if (isSuccess(result) && result.data) {
+          setSessions(result.data);
+        }
       }
     } catch (err) {
       console.error('Failed to fetch sessions');
@@ -97,8 +99,10 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
     try {
       const res = await authFetch('/api/user/account/delete-request');
       if (res.ok) {
-        const { data } = await res.json();
-        setDeletionRequest(data?.request || null);
+        const result = await parseApiResponse<{ request: DeletionRequest | null }>(res);
+        if (isSuccess(result) && result.data) {
+          setDeletionRequest(result.data?.request || null);
+        }
       }
     } catch (err) {
       console.error('Failed to fetch deletion request');
@@ -119,14 +123,14 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
         method: 'POST',
         body: formData
       });
-      const result = await res.json();
-      if (res.ok) {
-        const avatarUrl = result.data?.avatar_url || result.avatar_url;
+      const result = await parseApiResponse<{ avatar_url: string }>(res);
+      if (isSuccess(result) && result.data) {
+        const avatarUrl = result.data.avatar_url;
         setAvatarUrl(avatarUrl);
         setUser({ ...user, avatar_url: avatarUrl });
         setMessage('Avatar updated successfully');
       } else {
-        setError(result.error || 'Failed to upload avatar');
+        setError(getErrorMessage(result));
       }
     } catch (err) {
       setError('Network error');
@@ -149,16 +153,16 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: avatarUrlInput })
       });
-      const result = await res.json();
-      if (res.ok) {
-        const avatarUrl = result.data?.avatar_url || result.avatar_url;
+      const result = await parseApiResponse<{ avatar_url: string }>(res);
+      if (isSuccess(result) && result.data) {
+        const avatarUrl = result.data.avatar_url;
         setAvatarUrl(avatarUrl);
         setUser({ ...user, avatar_url: avatarUrl });
         setAvatarUrlInput('');
         setShowUrlInput(false);
         setMessage('Avatar updated successfully');
       } else {
-        setError(result.error || 'Failed to set avatar URL');
+        setError(getErrorMessage(result));
       }
     } catch (err) {
       setError('Network error');
@@ -175,13 +179,13 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
       const res = await authFetch('/api/user/account/delete-request', {
         method: 'POST',
       });
-      const result = await res.json();
-      if (res.ok) {
-        setDeletionRequest(result.data?.request || result.request);
+      const result = await parseApiResponse<{ scheduled_delete_at: string; request: DeletionRequest }>(res);
+      if (isSuccess(result) && result.data) {
+        setDeletionRequest(result.data?.request || null);
         setShowDeleteConfirm(false);
         setMessage('Account deletion request submitted. You have 30 days to cancel.');
       } else {
-        setError(result.error || 'Failed to submit deletion request');
+        setError(getErrorMessage(result));
       }
     } catch (err) {
       setError('Network error');
@@ -198,12 +202,12 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
       const res = await authFetch('/api/user/account/delete-request', {
         method: 'DELETE',
       });
-      if (res.ok) {
+      const result = await parseApiResponse(res);
+      if (isSuccess(result)) {
         await fetchDeletionRequest();
         setMessage('Account deletion request cancelled.');
       } else {
-        const result = await res.json();
-        setError(result.error || 'Failed to cancel deletion request');
+        setError(getErrorMessage(result));
       }
     } catch (err) {
       setError('Network error');
@@ -225,12 +229,12 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
         body: JSON.stringify({ full_name: fullName, phone })
       });
 
-      if (res.ok) {
+      const result = await parseApiResponse(res);
+      if (isSuccess(result)) {
         setMessage('Profile updated successfully');
         setUser({ ...user, full_name: fullName, phone });
       } else {
-        const result = await res.json();
-        setError(result.error || 'Failed to update profile');
+        setError(getErrorMessage(result));
       }
     } catch (err) {
       setError('Network error');
@@ -248,8 +252,10 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ password })
         });
-        const json = await res.json();
-        setPasswordStrength(json.data ?? json);
+        const result = await parseApiResponse<PasswordStrength>(res);
+        if (isSuccess(result) && result.data) {
+          setPasswordStrength(result.data);
+        }
       } catch (err) {
         console.error('Failed to validate password');
       }
@@ -280,15 +286,15 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
         body: JSON.stringify({ current_password: currentPassword, new_password: newPassword })
       });
 
-      if (res.ok) {
+      const result = await parseApiResponse(res);
+      if (isSuccess(result)) {
         setMessage('Password changed successfully');
         setCurrentPassword('');
         setNewPassword('');
         setConfirmPassword('');
         setPasswordStrength(null);
       } else {
-        const result = await res.json();
-        setError(result.error || 'Failed to change password');
+        setError(getErrorMessage(result));
       }
     } catch (err) {
       setError('Network error');
@@ -303,8 +309,11 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
         method: 'DELETE',
       });
 
-      if (res.ok) {
+      const result = await parseApiResponse(res);
+      if (isSuccess(result)) {
         setSessions(sessions.filter(s => s.id !== sessionId));
+      } else {
+        setError(getErrorMessage(result) || 'Failed to revoke session');
       }
     } catch (err) {
       console.error('Failed to revoke session');

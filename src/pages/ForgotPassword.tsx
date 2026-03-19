@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import { Shield, ArrowLeft, CheckCircle, Mail } from 'lucide-react';
+import { parseApiResponse, isSuccess, getErrorMessage } from '../utils/fetch';
 
 export default function ForgotPassword() {
   const [sent, setSent] = useState(false);
@@ -20,11 +21,11 @@ export default function ForgotPassword() {
         body: JSON.stringify({ email })
       });
 
-      if (res.ok) {
+      const result = await parseApiResponse(res);
+      if (isSuccess(result)) {
         setSent(true);
       } else {
-        const json = await res.json();
-        setError(json.error || 'Failed to request password reset');
+        setError(getErrorMessage(result));
       }
     } catch {
       setError('Network error');

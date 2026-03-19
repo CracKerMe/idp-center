@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useSearch, useNavigate } from '@tanstack/react-router';
 import { Shield, CheckCircle, XCircle } from 'lucide-react';
-import { authFetch } from '../utils/fetch';
+import { authFetch, parseApiResponse, isSuccess, getErrorMessage } from '../utils/fetch';
 
 export default function Authorize({ user }: { user: any }) {
   const searchParams: any = useSearch({ strict: false });
@@ -22,10 +22,13 @@ export default function Authorize({ user }: { user: any }) {
     }
 
     fetch(`/api/oidc/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=${responseType}&state=${state}&scope=${scope}`)
-      .then(res => res.json())
+      .then(res => parseApiResponse(res))
       .then(result => {
-        if (result.error) setError(result.error);
-        else setClientInfo(result.data || result);
+        if (isSuccess(result) && result.data) {
+          setClientInfo(result.data);
+        } else {
+          setError(getErrorMessage(result));
+        }
       });
   }, [clientId, redirectUri, responseType, state, scope]);
 
@@ -53,11 +56,11 @@ export default function Authorize({ user }: { user: any }) {
       })
     });
 
-    const { data, error: apiError } = await res.json();
-    if (res.ok && data?.redirect_url) {
-      window.location.href = data.redirect_url;
+    const result = await parseApiResponse<{ redirect_url: string }>(res);
+    if (isSuccess(result) && result.data?.redirect_url) {
+      window.location.href = result.data.redirect_url;
     } else {
-      setError(apiError || 'Authorization failed');
+      setError(getErrorMessage(result) || 'Authorization failed');
     }
   };
 

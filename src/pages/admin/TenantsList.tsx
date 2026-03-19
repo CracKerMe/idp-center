@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Building, Plus, Edit, Trash2, Search, MoreVertical, CheckCircle, XCircle } from 'lucide-react';
-import { authFetch } from '../../utils/fetch';
+import { authFetch, parseApiResponse, isSuccess, getErrorMessage } from '../../utils/fetch';
 
 interface Tenant {
   id: string;
@@ -29,9 +29,9 @@ export default function TenantsList() {
   const fetchTenants = async () => {
     try {
       const res = await authFetch('/api/admin/tenants');
-      if (res.ok) {
-        const json = await res.json();
-        setTenants(json.data ?? json);
+      const result = await parseApiResponse(res);
+      if (isSuccess(result) && result.data) {
+        setTenants(Array.isArray(result.data) ? result.data : []);
       }
     } catch (err) {
       console.error('Failed to fetch tenants');
@@ -58,14 +58,14 @@ export default function TenantsList() {
         })
       });
 
-      if (res.ok) {
+      const result = await parseApiResponse(res);
+      if (isSuccess(result)) {
         setShowModal(false);
         setEditingTenant(null);
         setFormData({ name: '', domain: '', settings: '{}' });
         fetchTenants();
       } else {
-        const result = await res.json();
-        setError(result.error || 'Failed to save tenant');
+        setError(getErrorMessage(result));
       }
     } catch (err) {
       setError('Network error');
@@ -82,11 +82,11 @@ export default function TenantsList() {
         method: 'DELETE',
       });
 
-      if (res.ok) {
+      const result = await parseApiResponse(res);
+      if (isSuccess(result)) {
         fetchTenants();
       } else {
-        const data = await res.json();
-        alert(data.error || 'Failed to delete tenant');
+        alert(getErrorMessage(result));
       }
     } catch (err) {
       alert('Network error');

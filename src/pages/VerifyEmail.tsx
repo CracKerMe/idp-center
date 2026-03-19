@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link, useSearch } from '@tanstack/react-router';
 import { Shield, CheckCircle, XCircle, Loader2 } from 'lucide-react';
+import { parseApiResponse, isSuccess, getErrorMessage } from '../utils/fetch';
 
 export default function VerifyEmail() {
   const { token } = useSearch({ strict: false }) as { token?: string };
@@ -20,16 +21,17 @@ export default function VerifyEmail() {
       body: JSON.stringify({ token }),
     })
       .then(async (res) => {
-        if (res.ok) {
+        const result = await parseApiResponse(res);
+        if (isSuccess(result)) {
           setStatus('success');
         } else {
-          const json = await res.json();
-          if (json.code === 'TOKEN_ALREADY_USED') {
+          // 处理特定的错误码
+          if (result.code === 'TOKEN_ALREADY_USED') {
             setError('This verification link has already been used.');
-          } else if (json.code === 'TOKEN_INVALID' || json.code === 'TOKEN_EXPIRED') {
+          } else if (result.code === 'TOKEN_INVALID' || result.code === 'TOKEN_EXPIRED') {
             setError('This verification link has expired or is invalid.');
           } else {
-            setError(json.error || 'Verification failed');
+            setError(getErrorMessage(result));
           }
           setStatus('error');
         }

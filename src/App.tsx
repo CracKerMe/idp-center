@@ -6,7 +6,7 @@
 import { useState, useEffect } from 'react';
 import { createRouter, RouterProvider, createHashHistory } from '@tanstack/react-router';
 import { routeTree } from './routeTree.gen';
-import { authFetch } from './utils/fetch';
+import { authFetch, parseApiResponse, isSuccess } from './utils/fetch';
 
 const hashHistory = createHashHistory();
 const router = createRouter({ 
@@ -51,38 +51,56 @@ export default function App() {
 
   useEffect(() => {
     // Handle GitHub OAuth callback — exchange short-lived code for tokens
-    const params = new URLSearchParams(window.location.search);
-    const githubCode = params.get('github_code');
-    const sessionId = params.get('session_id');
+    // In hash mode, query params are after the hash (e.g., /#/?github_code=xxx)
+    const hash = window.location.hash;
+    const hashQueryIndex = hash.indexOf('?');
+    const hashQuery = hashQueryIndex !== -1 ? hash.slice(hashQueryIndex + 1) : '';
+    const hashParams = new URLSearchParams(hashQuery);
+    const githubCode = hashParams.get('github_code');
+    const sessionId = hashParams.get('session_id');
 
     const init = async () => {
       if (githubCode) {
-        // Clean up URL immediately (hash mode: keep hash, remove query params)
-        window.history.replaceState({}, '', window.location.pathname + window.location.hash.split('?')[0]);
+        // Clean up URL immediately (hash mode: keep hash path, remove query params)
+        const cleanHash = hashQueryIndex !== -1 ? hash.slice(0, hashQueryIndex) : hash;
+        window.history.replaceState({}, '', window.location.pathname + cleanHash);
         try {
           const exchangeRes = await fetch('/api/auth/github/exchange', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ code: githubCode })
           });
-          if (exchangeRes.ok) {
-            const result = await exchangeRes.json();
-            const data = result.data || result;
+          const result = await parseApiResponse<{ access_token: string; refresh_token: string; user: any }>(exchangeRes);
+          if (isSuccess(result) && result.data) {
+            const data = result.data;
             localStorage.setItem('token', data.access_token);
             localStorage.setItem('refresh_token', data.refresh_token);
             if (sessionId) localStorage.setItem('session_id', sessionId);
             if (data.user) {
+              const redirectTarget = localStorage.getItem('github_post_login_redirect');
+              localStorage.removeItem('github_post_login_redirect');
               setUser(data.user);
               setLoading(false);
+              if (
+                redirectTarget &&
+                redirectTarget.startsWith('/') &&
+                !redirectTarget.startsWith('//')
+              ) {
+                window.location.replace('/#' + redirectTarget);
+              } else {
+                window.location.replace('/#/');
+              }
               return;
             }
           }
-        } catch {
+        } catch (error) {
+          console.error('Error exchanging GitHub code:', error);
           // Fall through to normal token check
         }
       }
 
       // Legacy: handle old-style tokens in URL (backwards compat)
+      const params = new URLSearchParams(window.location.search);
       const accessToken = params.get('access_token');
       const refreshToken = params.get('refresh_token');
       if (accessToken) {
@@ -101,9 +119,11 @@ export default function App() {
             localStorage.removeItem('refresh_token');
             localStorage.removeItem('session_id');
             setUser(null);
-          } else if (res.ok) {
-            const { data } = await res.json();
-            if (data) setUser(data);
+          } else {
+            const result = await parseApiResponse<any>(res);
+            if (isSuccess(result) && result.data) {
+              setUser(result.data);
+            }
           }
         } catch {
           // ignore

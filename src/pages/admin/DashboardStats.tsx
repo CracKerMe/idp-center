@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Users, Building, Key, Activity, Clock, TrendingUp, LogIn, UserPlus } from 'lucide-react';
 import { motion } from 'motion/react';
-import { authFetch } from '../../utils/fetch';
+import { authFetch, parseApiResponse, isSuccess } from '../../utils/fetch';
 
 interface Stats {
   users: number;
@@ -28,9 +28,9 @@ export default function DashboardStats() {
   const fetchStats = async () => {
     try {
       const res = await authFetch('/api/admin/stats');
-      if (res.ok) {
-        const result = await res.json();
-        setStats(result.data || result);
+      const result = await parseApiResponse<Stats>(res);
+      if (isSuccess(result) && result.data) {
+        setStats(result.data);
       }
     } catch (err) {
       console.error('Failed to fetch stats');

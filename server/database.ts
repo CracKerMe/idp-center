@@ -138,6 +138,7 @@ const migrations = [
   { table: 'access_tokens', column: 'scope', sql: "ALTER TABLE access_tokens ADD COLUMN scope TEXT DEFAULT 'openid'" },
   { table: 'access_tokens', column: 'revoked_at', sql: 'ALTER TABLE access_tokens ADD COLUMN revoked_at DATETIME' },
   { table: 'access_tokens', column: 'revoke_reason', sql: 'ALTER TABLE access_tokens ADD COLUMN revoke_reason TEXT' },
+  { table: 'access_tokens', column: 'created_at', sql: 'ALTER TABLE access_tokens ADD COLUMN created_at DATETIME' },
 ];
 
 for (const migration of migrations) {

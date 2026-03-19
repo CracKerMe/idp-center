@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { ShieldCheck } from 'lucide-react';
 import AppHeader from '../components/AppHeader';
-import { authFetch } from '../utils/fetch';
+import { authFetch, parseApiResponse, isSuccess, getErrorMessage } from '../utils/fetch';
 
 export default function SetupOTP({ user, setUser }: { user: any, setUser: (user: any) => void }) {
   const [qrCode, setQrCode] = useState('');
@@ -15,10 +15,12 @@ export default function SetupOTP({ user, setUser }: { user: any, setUser: (user:
     authFetch('/api/auth/otp/setup', {
       method: 'POST',
     })
-    .then(res => res.json())
+    .then(res => parseApiResponse<{ qrCodeUrl: string; secret: string }>(res))
     .then(result => {
-      setQrCode(result.data?.qrCodeUrl || result.qrCodeUrl);
-      setSecret(result.data?.secret || result.secret);
+      if (isSuccess(result) && result.data) {
+        setQrCode(result.data.qrCodeUrl || '');
+        setSecret(result.data.secret || '');
+      }
     });
   }, []);
 
@@ -32,11 +34,12 @@ export default function SetupOTP({ user, setUser }: { user: any, setUser: (user:
       body: JSON.stringify({ token })
     });
 
-    if (res.ok) {
+    const result = await parseApiResponse(res);
+    if (isSuccess(result)) {
       setUser({ ...user, otp_enabled: 1 });
       navigate({ to: '/' });
     } else {
-      setError('Invalid code. Please try again.');
+      setError(getErrorMessage(result) || 'Invalid code. Please try again.');
     }
   };
 
