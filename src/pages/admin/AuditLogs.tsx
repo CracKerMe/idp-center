@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { format } from 'date-fns';
 import { Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import { authFetch, parseApiResponse, isSuccess } from '../../utils/fetch';
+import AdminTable from '../../components/admin/AdminTable';
+import AdminPageHeader from '../../components/admin/AdminPageHeader';
 
 const ACTION_OPTIONS = [
   '', 'LOGIN_SUCCESS', 'LOGIN_FAILED', 'LOGOUT', 'REGISTER',
@@ -10,7 +12,7 @@ const ACTION_OPTIONS = [
   'ACCOUNT_BANNED', 'ACCOUNT_UNBANNED', 'TOKEN_CLEANUP',
 ];
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 10;
 
 export default function AuditLogs() {
   const [logs, setLogs] = useState<any[]>([]);
@@ -44,8 +46,8 @@ export default function AuditLogs() {
         setLogs(data);
         setTotal(data.length);
       } else {
-        setLogs(data.logs || []);
-        setTotal(data.pagination?.total ?? data.total ?? (data.data ?? data.logs ?? []).length);
+        setLogs(data.items || []);
+        setTotal(data.pagination?.total ?? data.total ?? (data.data ?? data.items ?? []).length);
       }
     }
     setLoading(false);
@@ -72,19 +74,17 @@ export default function AuditLogs() {
 
   return (
     <div className="bg-white dark:bg-zinc-900 shadow overflow-hidden sm:rounded-lg">
-      <div className="px-4 py-5 sm:px-6">
-        <h3 className="text-lg leading-6 font-medium text-zinc-900 dark:text-white">Audit Logs</h3>
-      </div>
+      <AdminPageHeader title="Audit Logs" />
 
       {/* Filters */}
       <div className="border-t border-zinc-200 dark:border-zinc-700 px-4 py-4 sm:px-6 bg-zinc-50 dark:bg-zinc-800">
-        <form onSubmit={handleSearch} className="flex flex-wrap gap-3 items-end">
-          <div>
+        <form onSubmit={handleSearch} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 items-end">
+          <div className="w-full">
             <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">Action</label>
             <select
               value={filters.action}
               onChange={e => setFilters(f => ({ ...f, action: e.target.value }))}
-              className="border border-zinc-300 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white rounded-md shadow-sm py-1.5 px-2 text-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+              className="w-full border border-zinc-300 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white rounded-md shadow-sm py-1.5 px-2 text-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
             >
               <option value="">All actions</option>
               {ACTION_OPTIONS.filter(Boolean).map(a => (
@@ -92,47 +92,46 @@ export default function AuditLogs() {
               ))}
             </select>
           </div>
-          <div>
+          <div className="w-full">
             <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">User ID</label>
             <input
               type="text"
               placeholder="User ID..."
               value={filters.user_id}
               onChange={e => setFilters(f => ({ ...f, user_id: e.target.value }))}
-              className="border border-zinc-300 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white rounded-md shadow-sm py-1.5 px-2 text-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 w-44"
+              className="w-full border border-zinc-300 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white rounded-md shadow-sm py-1.5 px-2 text-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
             />
           </div>
-          <div>
+          <div className="w-full">
             <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">From</label>
             <input
               type="date"
               value={filters.start_date}
               onChange={e => setFilters(f => ({ ...f, start_date: e.target.value }))}
-              className="border border-zinc-300 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white rounded-md shadow-sm py-1.5 px-2 text-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+              className="w-full border border-zinc-300 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white rounded-md shadow-sm py-1.5 px-2 text-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
             />
           </div>
-          <div>
+          <div className="w-full">
             <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">To</label>
             <input
               type="date"
               value={filters.end_date}
               onChange={e => setFilters(f => ({ ...f, end_date: e.target.value }))}
-              className="border border-zinc-300 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white rounded-md shadow-sm py-1.5 px-2 text-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+              className="w-full border border-zinc-300 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white rounded-md shadow-sm py-1.5 px-2 text-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
             />
           </div>
           <button type="submit"
-            className="inline-flex items-center px-3 py-1.5 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700">
+            className="inline-flex items-center justify-center w-full sm:w-auto px-3 py-1.5 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700">
             <Search className="h-4 w-4 mr-1" /> Search
           </button>
           <button type="button" onClick={handleReset}
-            className="inline-flex items-center px-3 py-1.5 border border-zinc-300 dark:border-zinc-700 text-sm font-medium rounded-md text-zinc-700 dark:text-zinc-300 bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700">
+            className="inline-flex items-center justify-center w-full sm:w-auto px-3 py-1.5 border border-zinc-300 dark:border-zinc-700 text-sm font-medium rounded-md text-zinc-700 dark:text-zinc-300 bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700">
             Reset
           </button>
         </form>
       </div>
 
-      <div className="border-t border-zinc-200 dark:border-zinc-700">
-        <table className="min-w-full divide-y divide-zinc-200 dark:divide-zinc-700">
+      <AdminTable minWidthClass="md:min-w-225">
           <thead className="bg-zinc-50 dark:bg-zinc-800">
             <tr>
               <th className="px-6 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">Timestamp</th>
@@ -164,18 +163,17 @@ export default function AuditLogs() {
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-zinc-500 dark:text-zinc-400">
                   {log.username || log.user_id || 'System/Anonymous'}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-zinc-500 dark:text-zinc-400 font-mono text-xs">
+                <td className="px-6 py-4 whitespace-nowrap text-xs text-zinc-500 dark:text-zinc-400 font-mono">
                   {log.ip_address}
                 </td>
                 <td className="px-6 py-4 text-sm text-zinc-500 dark:text-zinc-400">{log.details}</td>
               </tr>
             ))}
           </tbody>
-        </table>
-      </div>
+      </AdminTable>
 
       {/* Pagination */}
-      <div className="border-t border-zinc-200 dark:border-zinc-700 px-4 py-3 flex items-center justify-between sm:px-6">
+      <div className="border-t border-zinc-200 dark:border-zinc-700 px-4 py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
         <p className="text-sm text-zinc-700 dark:text-zinc-300">
           {total > 0
             ? `Showing ${(page - 1) * PAGE_SIZE + 1}–${Math.min(page * PAGE_SIZE, total)} of ${total}`

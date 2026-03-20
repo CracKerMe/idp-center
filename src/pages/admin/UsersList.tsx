@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import { Plus, Edit, Ban, CheckCircle, KeyRound, Trash2 } from 'lucide-react';
 import { authFetch, parseApiResponse, isSuccess, getErrorMessage } from '../../utils/fetch';
+import AdminTable from '../../components/admin/AdminTable';
+import AdminPageHeader from '../../components/admin/AdminPageHeader';
 
 interface User {
   id: string;
@@ -121,16 +123,18 @@ export default function UsersList() {
 
   return (
     <div className="bg-white dark:bg-zinc-900 shadow overflow-hidden sm:rounded-lg">
-      <div className="px-4 py-5 sm:px-6 flex justify-between items-center">
-        <h3 className="text-lg leading-6 font-medium text-zinc-900 dark:text-white">Registered Users</h3>
-        <button
-          onClick={() => setShowCreateForm(!showCreateForm)}
-          className="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700"
-        >
-          <Plus className="-ml-0.5 mr-2 h-4 w-4" />
-          New User
-        </button>
-      </div>
+      <AdminPageHeader
+        title="Registered Users"
+        actions={(
+          <button
+            onClick={() => setShowCreateForm(!showCreateForm)}
+            className="inline-flex w-full sm:w-auto justify-center items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700"
+          >
+            <Plus className="-ml-0.5 mr-2 h-4 w-4" />
+            New User
+          </button>
+        )}
+      />
 
       {showCreateForm && (
         <div className="border-t border-zinc-200 dark:border-zinc-700 px-4 py-5 sm:p-6 bg-zinc-50 dark:bg-zinc-800">
@@ -176,8 +180,7 @@ export default function UsersList() {
         </div>
       )}
 
-      <div className="border-t border-zinc-200 dark:border-zinc-700">
-        <table className="min-w-full divide-y divide-zinc-200 dark:divide-zinc-700">
+      <AdminTable minWidthClass="md:min-w-245">
           <thead className="bg-zinc-50 dark:bg-zinc-800">
             <tr>
               <th className="px-6 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">Username</th>
@@ -234,8 +237,7 @@ export default function UsersList() {
               </tr>
             ))}
           </tbody>
-        </table>
-      </div>
+      </AdminTable>
 
       {/* Edit Modal */}
       {editingUser && (

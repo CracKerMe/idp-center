@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { Building, Plus, Edit, Trash2, Search, MoreVertical, CheckCircle, XCircle } from 'lucide-react';
+import { Building, Plus, Edit, Trash2, Search, CheckCircle, XCircle } from 'lucide-react';
 import { authFetch, parseApiResponse, isSuccess, getErrorMessage } from '../../utils/fetch';
+import AdminTable from '../../components/admin/AdminTable';
+import AdminPageHeader from '../../components/admin/AdminPageHeader';
 
 interface Tenant {
   id: string;
@@ -110,27 +112,25 @@ export default function TenantsList() {
 
   return (
     <div>
-      <div className="sm:flex sm:items-center">
-        <div className="sm:flex-auto">
-          <h1 className="text-xl font-semibold text-zinc-900 dark:text-white">Tenants</h1>
-          <p className="mt-2 text-sm text-zinc-700 dark:text-zinc-400">
-            Manage your organization's tenants and domains.
-          </p>
-        </div>
-        <div className="mt-4 sm:mt-0 sm:ml-16 sm:flex-none">
+      <AdminPageHeader
+        title="Tenants"
+        titleAs="h1"
+        titleClassName="text-xl font-semibold leading-6"
+        description="Manage your organization's tenants and domains."
+        actions={(
           <button
             onClick={() => {
               setEditingTenant(null);
               setFormData({ name: '', domain: '', settings: '{}' });
               setShowModal(true);
             }}
-            className="inline-flex items-center justify-center rounded-md border border-transparent bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 focus:outline-none sm:w-auto"
+            className="inline-flex w-full sm:w-auto items-center justify-center rounded-md border border-transparent bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 focus:outline-none"
           >
             <Plus className="h-4 w-4 mr-2" />
             Add Tenant
           </button>
-        </div>
-      </div>
+        )}
+      />
 
       {/* Search */}
       <div className="mt-4 relative">
@@ -140,22 +140,20 @@ export default function TenantsList() {
           placeholder="Search tenants..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
-          className="pl-10 w-full max-w-md px-3 py-2 border border-zinc-300 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+          className="pl-10 w-full sm:max-w-md px-3 py-2 border border-zinc-300 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
         />
       </div>
 
       {/* Table */}
-      <div className="mt-6 flex flex-col">
-        <div className="-my-2 -mx-4 overflow-x-auto sm:-mx-6 lg:-mx-8">
-          <div className="inline-block min-w-full py-2 align-middle md:px-6 lg:px-8">
-            <div className="overflow-hidden shadow ring-1 ring-black ring-opacity-5 md:rounded-lg">
-              <table className="min-w-full divide-y divide-zinc-300 dark:divide-zinc-700">
+      <div className="mt-6">
+        <div className="shadow ring-1 ring-black ring-opacity-5 md:rounded-lg overflow-hidden">
+          <AdminTable minWidthClass="md:min-w-190" className="border-t-0" tableClassName="divide-zinc-300 dark:divide-zinc-700">
                 <thead className="bg-zinc-50 dark:bg-zinc-800">
                   <tr>
-                    <th scope="col" className="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-zinc-900 dark:text-white sm:pl-6">Name</th>
-                    <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-zinc-900 dark:text-white">Domain</th>
-                    <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-zinc-900 dark:text-white">Status</th>
-                    <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-zinc-900 dark:text-white">Created</th>
+                    <th scope="col" className="py-3.5 pl-4 pr-3 text-left text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400 sm:pl-6">Name</th>
+                    <th scope="col" className="px-3 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Domain</th>
+                    <th scope="col" className="px-3 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Status</th>
+                    <th scope="col" className="px-3 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Created</th>
                     <th scope="col" className="relative py-3.5 pl-3 pr-4 sm:pr-6">
                       <span className="sr-only">Actions</span>
                     </th>
@@ -216,9 +214,7 @@ export default function TenantsList() {
                     ))
                   )}
                 </tbody>
-              </table>
-            </div>
-          </div>
+          </AdminTable>
         </div>
       </div>
 
