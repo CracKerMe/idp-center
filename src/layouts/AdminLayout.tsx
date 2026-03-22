@@ -156,7 +156,7 @@ export default function AdminLayout({ user, setUser }: { user: any, setUser: (us
         )}
       </AnimatePresence>
 
-      <div className="hidden md:flex md:w-64 bg-zinc-900 text-white md:flex-col">
+      <div className="hidden md:flex md:w-64 bg-zinc-900 text-white md:flex-col sticky top-0 h-screen">
         <div className="h-16 flex items-center px-6 bg-zinc-950 border-b border-zinc-800">
           <Shield className="h-8 w-8 text-indigo-500" />
           <span className="ml-3 text-lg font-semibold tracking-wide">Admin Panel</span>
