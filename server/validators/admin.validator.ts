@@ -81,7 +81,7 @@ export const tenantIdParamsSchema = z.object({
 export const createTenantSchema = z.object({
   name: z.string().min(1).max(100),
   domain: z.string().optional(),
-  settings: z.record(z.unknown()).optional(),
+  settings: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type CreateTenantInput = z.infer<typeof createTenantSchema>;
@@ -91,7 +91,7 @@ export const updateTenantSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   domain: z.string().optional(),
   is_active: z.boolean().optional(),
-  settings: z.record(z.unknown()).optional(),
+  settings: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type UpdateTenantInput = z.infer<typeof updateTenantSchema>;
