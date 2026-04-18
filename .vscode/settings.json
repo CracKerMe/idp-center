@@ -4,5 +4,6 @@
     "otplib",
     "qrcode",
     "tanstack"
-  ]
+  ],
+  "biome.enabled": false
 }

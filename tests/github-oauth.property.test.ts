@@ -1,6 +1,9 @@
 import { describe, it } from 'vitest';
 import * as fc from 'fast-check';
 import crypto from 'crypto';
+import Database from 'better-sqlite3';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 
 // Re-implement generateOAuthState locally so the property test has no dependency
 // on the server module (which requires a running DB). The implementation is
@@ -64,11 +67,6 @@ describe('Property 2: 授权 URL 完整性', () => {
     );
   });
 });
-
-import Database from 'better-sqlite3';
-import crypto from 'crypto';
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
 
 // ─── Shared test DB helpers ───────────────────────────────────────────────────
 
