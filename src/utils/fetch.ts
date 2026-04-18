@@ -70,11 +70,13 @@ export async function authFetch(url: string, options: FetchOptions = {}): Promis
   if (!skipAuth) {
     const token = localStorage.getItem('token');
     const sessionId = localStorage.getItem('session_id');
+    const tenantId = localStorage.getItem('tenant_id');
     
     fetchOptions.headers = {
       ...fetchOptions.headers,
       ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-      ...(sessionId ? { 'X-Session-Id': sessionId } : {})
+      ...(sessionId ? { 'X-Session-Id': sessionId } : {}),
+      ...(tenantId ? { 'X-Tenant-ID': tenantId } : {})
     };
   }
   

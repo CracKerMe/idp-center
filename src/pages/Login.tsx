@@ -96,6 +96,9 @@ export default function Login({ setUser }: { setUser: (user: any) => void }) {
       if (data!.session_id) {
         localStorage.setItem('session_id', data!.session_id);
       }
+      if (data!.user?.tenant_id) {
+        localStorage.setItem('tenant_id', data!.user.tenant_id);
+      }
       setUser(data!.user);
       const redirect = searchParams.redirect;
       if (redirect && typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//')) {

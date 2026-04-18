@@ -15,8 +15,10 @@ import adminRouter from './server/routes/admin.js';
 import githubRouter from './server/routes/github.js';
 import { db } from './server/database.js';
 
+import { tenantContext } from './server/middleware/tenant.js';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const app = express();
+export const app = express();
 
 // Security headers with helmet
 app.use(helmet({
@@ -41,6 +43,7 @@ app.use(helmet({
 }));
 
 app.use(express.json());
+app.use('/api', tenantContext);
 
 // Serve uploaded avatars
 const uploadsDir = path.join(rootDir, 'uploads', 'avatars');
@@ -67,8 +70,9 @@ app.use('/api/oidc', oidcRouter);
 app.use('/api/user', userRouter);
 app.use('/api/admin', adminRouter);
 app.use('/.well-known', oidcRouter);
+app.use('/api/uploads', express.static(path.join(rootDir, 'uploads')));
 
-async function startServer() {
+export async function startServer() {
   if (config.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -80,11 +84,16 @@ async function startServer() {
     app.use(express.static('dist'));
   }
 
-  app.listen(config.PORT, '0.0.0.0', () => {
+  const server = app.listen(config.PORT, '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${config.PORT}`);
     cleanupExpiredTokens();
     setInterval(cleanupExpiredTokens, 3600000);
   });
+
+  return server;
 }
 
-startServer();
+// Only start the server if this file is run directly
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  startServer();
+}

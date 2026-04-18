@@ -36,9 +36,10 @@ router.get('/jwks.json', (req, res) => {
 // GET /api/oidc/authorize
 router.get('/authorize', (req, res) => {
   const { client_id, redirect_uri, scope } = req.query;
+  const tenantId = (req as any).tenantId;
 
-  const client = db.prepare('SELECT * FROM clients WHERE client_id = ?').get(client_id);
-  if (!client) return res.status(400).json(error('Invalid client_id', ErrorCode.VALIDATION_ERROR));
+  const client: any = db.prepare('SELECT * FROM clients WHERE client_id = ? AND tenant_id = ?').get(client_id, tenantId);
+  if (!client) return res.status(400).json(error('Invalid client_id for this tenant', ErrorCode.VALIDATION_ERROR));
 
   const rawUris = (client as any).redirect_uris || '';
   const registeredUris: string[] = rawUris.startsWith('[')
@@ -55,11 +56,12 @@ router.get('/authorize', (req, res) => {
 router.post('/authorize', authenticateToken, (req, res) => {
   const { client_id, redirect_uri, response_type, state, nonce, scope, code_challenge, code_challenge_method } = req.body;
   const userId = (req as any).user.id;
+  const tenantId = (req as any).tenantId;
 
   if (response_type !== 'code') return res.status(400).json(error('Unsupported response_type', ErrorCode.VALIDATION_ERROR));
 
-  const client = db.prepare('SELECT * FROM clients WHERE client_id = ?').get(client_id);
-  if (!client) return res.status(400).json(error('Invalid client_id', ErrorCode.VALIDATION_ERROR));
+  const client: any = db.prepare('SELECT * FROM clients WHERE client_id = ? AND tenant_id = ?').get(client_id, tenantId);
+  if (!client) return res.status(400).json(error('Invalid client_id for this tenant', ErrorCode.VALIDATION_ERROR));
 
   const rawUris = (client as any).redirect_uris || '';
   const registeredUris: string[] = rawUris.startsWith('[')
@@ -79,7 +81,7 @@ router.post('/authorize', authenticateToken, (req, res) => {
     nonce || null, authScope, code_challenge || null, challengeMethod
   );
 
-  logAudit(userId, 'OAUTH_AUTHORIZE', req, `Authorized client ${client_id}`);
+  logAudit(userId, 'OAUTH_AUTHORIZE', req, `Authorized client ${client_id}`, tenantId);
 
   const redirectUrl = new URL(redirect_uri as string);
   redirectUrl.searchParams.append('code', code);
@@ -91,12 +93,13 @@ router.post('/authorize', authenticateToken, (req, res) => {
 // POST /api/oidc/token
 router.post('/token', (req, res) => {
   const { grant_type, code, client_id, client_secret, redirect_uri, code_verifier, refresh_token } = req.body;
+  const tenantId = (req as any).tenantId;
 
   if (grant_type === 'refresh_token') {
     if (!refresh_token) return res.status(400).json(error('refresh_token is required', ErrorCode.VALIDATION_REQUIRED));
 
-    const client: any = db.prepare('SELECT * FROM clients WHERE client_id = ? AND client_secret = ?').get(client_id, client_secret);
-    if (!client) return res.status(401).json(error('Invalid client credentials', ErrorCode.AUTH_INVALID_CREDENTIALS));
+    const client: any = db.prepare('SELECT * FROM clients WHERE client_id = ? AND client_secret = ? AND tenant_id = ?').get(client_id, client_secret, tenantId);
+    if (!client) return res.status(401).json(error('Invalid client credentials for this tenant', ErrorCode.AUTH_INVALID_CREDENTIALS));
 
     const rtRecord: any = db.prepare(
       'SELECT * FROM refresh_tokens WHERE token = ? AND client_id = ? AND revoked = 0'
@@ -151,8 +154,8 @@ router.post('/token', (req, res) => {
 
   if (grant_type !== 'authorization_code') return res.status(400).json(error('Unsupported grant_type', ErrorCode.VALIDATION_ERROR));
 
-  const client: any = db.prepare('SELECT * FROM clients WHERE client_id = ? AND client_secret = ?').get(client_id, client_secret);
-  if (!client) return res.status(401).json(error('Invalid client credentials', ErrorCode.AUTH_INVALID_CREDENTIALS));
+  const client: any = db.prepare('SELECT * FROM clients WHERE client_id = ? AND client_secret = ? AND tenant_id = ?').get(client_id, client_secret, tenantId);
+  if (!client) return res.status(401).json(error('Invalid client credentials for this tenant', ErrorCode.AUTH_INVALID_CREDENTIALS));
 
   const authCode: any = db.prepare('SELECT * FROM auth_codes WHERE code = ? AND client_id = ? AND redirect_uri = ? AND used = 0').get(code, client_id, redirect_uri);
   if (!authCode || new Date(authCode.expires_at) < new Date()) {

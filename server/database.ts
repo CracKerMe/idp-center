@@ -2,20 +2,25 @@ import Database from 'better-sqlite3';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 
-export const db = new Database('auth.db');
+import { config } from './config.js';
+
+export const db = new Database(config.DB_PATH);
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
-    username TEXT UNIQUE NOT NULL,
-    email TEXT UNIQUE NOT NULL,
+    username TEXT NOT NULL,
+    email TEXT NOT NULL,
     password_hash TEXT NOT NULL,
+    tenant_id TEXT DEFAULT 'default',
     is_active INTEGER DEFAULT 1,
     is_admin INTEGER DEFAULT 0,
     otp_secret TEXT,
     otp_enabled INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(username, tenant_id),
+    UNIQUE(email, tenant_id)
   );
 
   CREATE TABLE IF NOT EXISTS clients (
@@ -25,7 +30,9 @@ db.exec(`
     client_name TEXT NOT NULL,
     redirect_uris TEXT NOT NULL,
     grant_types TEXT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    tenant_id TEXT DEFAULT 'default',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id)
   );
 
   CREATE TABLE IF NOT EXISTS auth_codes (
@@ -44,7 +51,8 @@ db.exec(`
     client_id TEXT NOT NULL,
     user_id TEXT NOT NULL,
     expires_at DATETIME NOT NULL,
-    revoked INTEGER DEFAULT 0
+    revoked INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
   CREATE TABLE IF NOT EXISTS audit_logs (
@@ -138,7 +146,8 @@ const migrations = [
   { table: 'access_tokens', column: 'scope', sql: "ALTER TABLE access_tokens ADD COLUMN scope TEXT DEFAULT 'openid'" },
   { table: 'access_tokens', column: 'revoked_at', sql: 'ALTER TABLE access_tokens ADD COLUMN revoked_at DATETIME' },
   { table: 'access_tokens', column: 'revoke_reason', sql: 'ALTER TABLE access_tokens ADD COLUMN revoke_reason TEXT' },
-  { table: 'access_tokens', column: 'created_at', sql: 'ALTER TABLE access_tokens ADD COLUMN created_at DATETIME' },
+  { table: 'access_tokens', column: 'created_at', sql: 'ALTER TABLE access_tokens ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP' },
+  { table: 'clients', column: 'tenant_id', sql: 'ALTER TABLE clients ADD COLUMN tenant_id TEXT DEFAULT "default"' },
 ];
 
 for (const migration of migrations) {
@@ -152,6 +161,69 @@ for (const migration of migrations) {
   } catch (err) {
     console.log(`Migration skipped for ${migration.table}.${migration.column}`);
   }
+}
+
+// Special Migration: Fix User constraints (from global UNIQUE to per-tenant UNIQUE)
+try {
+  const tableInfo = db.prepare("PRAGMA index_list(users)").all() as any[];
+  let hasGlobalUnique = false;
+  
+  for (const idx of tableInfo) {
+    if (idx.unique === 1 && idx.origin === 'u') {
+      const info = db.prepare(`PRAGMA index_info('${idx.name}')`).all() as any[];
+      // If the index has only 1 column, it's a global unique constraint (username or email)
+      // because our new constraints are composite (2 columns)
+      if (info.length === 1) {
+        hasGlobalUnique = true;
+        break;
+      }
+    }
+  }
+
+  if (hasGlobalUnique) {
+    console.log("Migration: Updating users table constraints for multi-tenancy...");
+    db.transaction(() => {
+      db.exec(`
+        ALTER TABLE users RENAME TO users_old;
+        CREATE TABLE users (
+          id TEXT PRIMARY KEY,
+          username TEXT NOT NULL,
+          email TEXT NOT NULL,
+          password_hash TEXT NOT NULL,
+          tenant_id TEXT DEFAULT 'default',
+          is_active INTEGER DEFAULT 1,
+          is_admin INTEGER DEFAULT 0,
+          otp_secret TEXT,
+          otp_enabled INTEGER DEFAULT 0,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          full_name TEXT,
+          avatar_url TEXT,
+          phone TEXT,
+          password_changed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          failed_login_attempts INTEGER DEFAULT 0,
+          locked_until DATETIME,
+          email_verified INTEGER DEFAULT 0,
+          email_verified_at DATETIME,
+          UNIQUE(username, tenant_id),
+          UNIQUE(email, tenant_id)
+        );
+        INSERT INTO users (id, username, email, password_hash, tenant_id, is_active, is_admin, otp_secret, otp_enabled, created_at, updated_at, full_name, avatar_url, phone, password_changed_at, failed_login_attempts, locked_until, email_verified, email_verified_at)
+        SELECT id, username, email, password_hash, COALESCE(tenant_id, 'default'), is_active, is_admin, otp_secret, otp_enabled, created_at, updated_at, full_name, avatar_url, phone, password_changed_at, failed_login_attempts, locked_until, email_verified, email_verified_at FROM users_old;
+        DROP TABLE users_old;
+      `);
+    })();
+    console.log("Migration: Users table refactored successfully.");
+  }
+} catch (err) {
+  console.error("Critical Migration Error (users):", err);
+}
+
+// Fix any existing access_tokens with NULL created_at (from before this change)
+try {
+  db.exec("UPDATE access_tokens SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL");
+} catch (err) {
+  // Ignore
 }
 
 // Create indexes

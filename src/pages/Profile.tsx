@@ -32,6 +32,15 @@ interface Session {
   created_at: string;
 }
 
+interface TrustedDevice {
+  id: string;
+  device_fingerprint: string;
+  device_name: string;
+  trusted_at: string;
+  expires_at: string;
+  last_used_at: string;
+}
+
 interface PasswordStrength {
   score: number;
   valid: boolean;
@@ -69,12 +78,14 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
   const [showPassword, setShowPassword] = useState(false);
   const [passwordStrength, setPasswordStrength] = useState<PasswordStrength | null>(null);
 
-  // Sessions
+  // Sessions and Devices
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [trustedDevices, setTrustedDevices] = useState<TrustedDevice[]>([]);
 
   useEffect(() => {
     if (activeTab === 'sessions') {
       fetchSessions();
+      fetchTrustedDevices();
     }
     if (activeTab === 'profile') {
       fetchDeletionRequest();
@@ -92,6 +103,20 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
       }
     } catch (err) {
       console.error('Failed to fetch sessions');
+    }
+  };
+
+  const fetchTrustedDevices = async () => {
+    try {
+      const res = await authFetch('/api/user/trusted-devices');
+      if (res.ok) {
+        const result = await parseApiResponse<TrustedDevice[]>(res);
+        if (isSuccess(result) && result.data) {
+          setTrustedDevices(result.data);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch trusted devices');
     }
   };
 
@@ -317,6 +342,22 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
       }
     } catch (err) {
       console.error('Failed to revoke session');
+    }
+  };
+
+  const handleRemoveTrustedDevice = async (deviceId: string) => {
+    try {
+      const res = await authFetch(`/api/user/trusted-devices/${deviceId}`, {
+        method: 'DELETE',
+      });
+      const result = await parseApiResponse(res);
+      if (isSuccess(result)) {
+        setTrustedDevices(trustedDevices.filter(d => d.id !== deviceId));
+      } else {
+        setError(getErrorMessage(result) || 'Failed to remove trusted device');
+      }
+    } catch (err) {
+      console.error('Failed to remove trusted device');
     }
   };
 
@@ -739,29 +780,58 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
 
           {/* Sessions Tab */}
           {activeTab === 'sessions' && (
-            <div className="bg-white dark:bg-zinc-900 shadow rounded-lg p-6">
-              <h3 className="text-lg font-medium text-zinc-900 dark:text-white mb-4">Active Sessions</h3>
-              {sessions.length === 0 ? (
-                <p className="text-sm text-zinc-500 dark:text-zinc-400">No active sessions</p>
-              ) : (
-                <div className="space-y-4">
-                  {sessions.map((session) => (
-                    <div key={session.id} className="flex items-center justify-between p-4 border border-zinc-200 dark:border-zinc-700 rounded-lg">
-                      <div>
-                        <p className="text-sm font-medium text-zinc-900 dark:text-white">{session.device_info || 'Unknown Device'}</p>
-                        <p className="text-xs text-zinc-500 dark:text-zinc-400">IP: {session.ip_address}</p>
-                        <p className="text-xs text-zinc-500 dark:text-zinc-400">Last active: {new Date(session.last_active).toLocaleString()}</p>
+            <div className="space-y-6">
+              <div className="bg-white dark:bg-zinc-900 shadow rounded-lg p-6">
+                <h3 className="text-lg font-medium text-zinc-900 dark:text-white mb-4">Active Sessions</h3>
+                {sessions.length === 0 ? (
+                  <p className="text-sm text-zinc-500 dark:text-zinc-400">No active sessions</p>
+                ) : (
+                  <div className="space-y-4">
+                    {sessions.map((session) => (
+                      <div key={session.id} className="flex items-center justify-between p-4 border border-zinc-200 dark:border-zinc-700 rounded-lg">
+                        <div>
+                          <p className="text-sm font-medium text-zinc-900 dark:text-white">{session.device_info || 'Unknown Device'}</p>
+                          <p className="text-xs text-zinc-500 dark:text-zinc-400">IP: {session.ip_address}</p>
+                          <p className="text-xs text-zinc-500 dark:text-zinc-400">Last active: {new Date(session.last_active).toLocaleString()}</p>
+                        </div>
+                        <button
+                          onClick={() => handleRevokeSession(session.id)}
+                          className="text-red-600 hover:text-red-500"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
                       </div>
-                      <button
-                        onClick={() => handleRevokeSession(session.id)}
-                        className="text-red-600 hover:text-red-500"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-white dark:bg-zinc-900 shadow rounded-lg p-6">
+                <h3 className="text-lg font-medium text-zinc-900 dark:text-white mb-4">Trusted Devices</h3>
+                <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">Devices that will not require 2FA on login.</p>
+                {trustedDevices.length === 0 ? (
+                  <p className="text-sm text-zinc-500 dark:text-zinc-400">No trusted devices</p>
+                ) : (
+                  <div className="space-y-4">
+                    {trustedDevices.map((device) => (
+                      <div key={device.id} className="flex items-center justify-between p-4 border border-zinc-200 dark:border-zinc-700 rounded-lg">
+                        <div>
+                          <p className="text-sm font-medium text-zinc-900 dark:text-white">{device.device_name || 'Unknown Device'}</p>
+                          <p className="text-xs text-zinc-500 dark:text-zinc-400">Trusted at: {new Date(device.trusted_at).toLocaleString()}</p>
+                          <p className="text-xs text-zinc-500 dark:text-zinc-400">Last used: {device.last_used_at ? new Date(device.last_used_at).toLocaleString() : 'Never'}</p>
+                        </div>
+                        <button
+                          onClick={() => handleRemoveTrustedDevice(device.id)}
+                          title="Remove device"
+                          className="text-red-600 hover:text-red-500"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
           </motion.div>

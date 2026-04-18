@@ -48,8 +48,9 @@ router.post('/register', validate({ body: registerSchema }), (req, res) => {
   try {
     const hash = bcrypt.hashSync(password, 10);
     const id = crypto.randomUUID();
-    db.prepare('INSERT INTO users (id, username, email, password_hash) VALUES (?, ?, ?, ?)').run(id, username, email, hash);
-    logAudit(id, 'REGISTER', req, `Registered ${username}`);
+    const tenantId = (req as any).tenantId;
+    db.prepare('INSERT INTO users (id, username, email, password_hash, tenant_id) VALUES (?, ?, ?, ?, ?)').run(id, username, email, hash, tenantId);
+    logAudit(id, 'REGISTER', req, `Registered ${username}`, tenantId);
 
     const verificationToken = crypto.randomUUID();
     const verificationExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
@@ -69,10 +70,11 @@ router.post('/register', validate({ body: registerSchema }), (req, res) => {
 // POST /api/auth/login
 router.post('/login', validate({ body: loginSchema }), (req, res) => {
   const { username, password, otp, remember_me, trust_device } = req.body;
-  const user: any = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+  const tenantId = (req as any).tenantId;
+  const user: any = db.prepare('SELECT * FROM users WHERE username = ? AND tenant_id = ?').get(username, tenantId);
 
   if (!user) {
-    logAudit(null, 'LOGIN_FAILED', req, `Failed login for ${username}`);
+    logAudit(null, 'LOGIN_FAILED', req, `Failed login for ${username}`, tenantId);
     return res.status(401).json(error('Invalid credentials', ErrorCode.AUTH_INVALID_CREDENTIALS));
   }
 
@@ -99,7 +101,7 @@ router.post('/login', validate({ body: loginSchema }), (req, res) => {
     } else {
       db.prepare('UPDATE users SET failed_login_attempts = ? WHERE id = ?').run(newAttempts, user.id);
     }
-    logAudit(user.id, 'LOGIN_FAILED', req, `Failed login for ${username}`);
+    logAudit(user.id, 'LOGIN_FAILED', req, `Failed login for ${username}`, tenantId);
     return res.status(401).json(error('Invalid credentials', ErrorCode.AUTH_INVALID_CREDENTIALS));
   }
 
@@ -128,7 +130,7 @@ router.post('/login', validate({ body: loginSchema }), (req, res) => {
       }
       const isValid = authenticator.check(otp, user.otp_secret);
       if (!isValid) {
-        logAudit(user.id, 'LOGIN_FAILED_OTP', req, `Failed OTP for ${username}`);
+        logAudit(user.id, 'LOGIN_FAILED_OTP', req, `Failed OTP for ${username}`, tenantId);
         return res.status(401).json(error('Invalid OTP', ErrorCode.AUTH_OTP_INVALID));
       }
     }
@@ -185,7 +187,7 @@ router.post('/login', validate({ body: loginSchema }), (req, res) => {
     crypto.randomUUID(), refreshToken, user.id, null, refreshExpiresAt, remember_me === true ? 1 : 0, deviceId
   );
 
-  logAudit(user.id, 'LOGIN_SUCCESS', req, `Session: ${sessionId}`);
+  logAudit(user.id, 'LOGIN_SUCCESS', req, `Session: ${sessionId}`, tenantId);
 
   res.json(success({
     access_token: accessToken,
@@ -207,7 +209,7 @@ router.post('/login', validate({ body: loginSchema }), (req, res) => {
 
 // GET /api/auth/me
 router.get('/me', authenticateToken, (req, res) => {
-  const user: any = db.prepare('SELECT id, username, email, full_name, phone, avatar_url, is_admin, otp_enabled FROM users WHERE id = ?').get((req as any).user.id);
+  const user: any = db.prepare('SELECT id, username, email, full_name, phone, avatar_url, is_admin, otp_enabled, tenant_id FROM users WHERE id = ?').get((req as any).user.id);
   if (!user) return res.status(404).json(error('User not found', ErrorCode.RESOURCE_NOT_FOUND));
   res.json(success(user));
 });
@@ -229,8 +231,8 @@ router.post('/logout', authenticateToken, (req, res) => {
     if (currentToken) {
       revokeToken(currentToken, RevokeReason.LOGOUT);
     }
-
-    logAudit(userId, 'LOGOUT', req, sessionId ? `Session: ${sessionId}` : 'All sessions');
+    const tenantId = (req as any).tenantId || (req as any).user?.tenant_id || 'default';
+    logAudit(userId, 'LOGOUT', req, sessionId ? `Session: ${sessionId}` : 'All sessions', tenantId);
     res.json(message('Logged out successfully'));
   } catch (err: any) {
     console.error('Logout error:', err);
@@ -264,7 +266,8 @@ router.post('/otp/verify', authenticateToken, validate({ body: otpVerifySchema }
   const isValid = authenticator.check(token, user.otp_secret);
   if (isValid) {
     db.prepare('UPDATE users SET otp_enabled = 1 WHERE id = ?').run(userId);
-    logAudit(userId, 'OTP_ENABLED', req);
+    const tenantId = (req as any).tenantId || user.tenant_id;
+    logAudit(userId, 'OTP_ENABLED', req, '', tenantId);
     res.json(success({ enabled: true }, 'OTP enabled successfully'));
   } else {
     res.status(400).json(error('Invalid OTP', ErrorCode.AUTH_OTP_INVALID));
@@ -320,16 +323,18 @@ router.post('/email/resend', authenticateToken, (req, res) => {
     console.error('Failed to send verification email:', err);
   });
 
-  logAudit(userId, 'EMAIL_VERIFICATION_RESENT', req, 'Verification email resent');
+  const tenantId = (req as any).tenantId || user.tenant_id;
+  logAudit(userId, 'EMAIL_VERIFICATION_RESENT', req, 'Verification email resent', tenantId);
   res.json(message('Verification email sent'));
 });
 
 // POST /api/auth/email/resend-public (public, no auth)
 router.post('/email/resend-public', validate({ body: emailResendPublicSchema }), (req, res) => {
   const { email, username } = req.body;
+  const tenantId = (req as any).tenantId;
   const user: any = email
-    ? db.prepare('SELECT * FROM users WHERE email = ?').get(email)
-    : db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+    ? db.prepare('SELECT * FROM users WHERE email = ? AND tenant_id = ?').get(email, tenantId)
+    : db.prepare('SELECT * FROM users WHERE username = ? AND tenant_id = ?').get(username, tenantId);
 
   if (!user || user.email_verified) {
     return res.json(message('If the account exists and is unverified, a verification link will be sent'));
@@ -345,15 +350,16 @@ router.post('/email/resend-public', validate({ body: emailResendPublicSchema }),
     console.error('Failed to send verification email:', err);
   });
 
-  logAudit(user.id, 'EMAIL_VERIFICATION_RESENT', req, 'Verification email resent (public)');
+  logAudit(user.id, 'EMAIL_VERIFICATION_RESENT', req, 'Verification email resent (public)', tenantId);
   res.json(message('If the email exists and is unverified, a verification link will be sent'));
 });
 
 // POST /api/auth/password/reset-request
 router.post('/password/reset-request', validate({ body: passwordResetRequestSchema }), (req, res) => {
   const { email } = req.body;
-
-  const user: any = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  const tenantId = (req as any).tenantId;
+ 
+  const user: any = db.prepare('SELECT * FROM users WHERE email = ? AND tenant_id = ?').get(email, tenantId);
   if (!user) {
     return res.json(message('If the email exists, a reset link will be sent'));
   }
@@ -364,9 +370,9 @@ router.post('/password/reset-request', validate({ body: passwordResetRequestSche
   db.prepare('INSERT INTO password_resets (id, user_id, token, expires_at) VALUES (?, ?, ?, ?)').run(
     crypto.randomUUID(), user.id, token, expiresAt
   );
-
-  logAudit(user.id, 'PASSWORD_RESET_REQUEST', req, `Password reset requested for ${email}`);
-
+ 
+  logAudit(user.id, 'PASSWORD_RESET_REQUEST', req, `Password reset requested for ${email}`, tenantId);
+ 
   emailService.sendPasswordResetEmail(email, token, user.username).catch((err: any) => {
     console.error('Failed to send password reset email:', err);
   });
@@ -405,11 +411,10 @@ router.post('/password/reset', validate({ body: passwordResetSchema }), (req, re
   db.prepare('UPDATE users SET password_hash = ?, password_changed_at = ? WHERE id = ?').run(hash, new Date().toISOString(), reset.user_id);
   db.prepare('UPDATE password_resets SET used = 1 WHERE id = ?').run(reset.id);
   
-  // Revoke all tokens for this user after password reset
-  revokeAllUserTokens(reset.user_id, RevokeReason.PASSWORD_CHANGE);
   db.prepare('UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ?').run(reset.user_id);
-
-  logAudit(reset.user_id, 'PASSWORD_RESET_COMPLETE', req, 'Password has been reset');
+  
+  const user: any = db.prepare('SELECT tenant_id FROM users WHERE id = ?').get(reset.user_id);
+  logAudit(reset.user_id, 'PASSWORD_RESET_COMPLETE', req, 'Password has been reset', user?.tenant_id || 'default');
   res.json(message('Password has been reset successfully'));
 });
 
@@ -419,36 +424,34 @@ router.post('/refresh', validate({ body: tokenRefreshSchema }), (req, res) => {
 
   const storedToken: any = db.prepare('SELECT * FROM refresh_tokens WHERE token = ? AND revoked = 0').get(refresh_token);
   if (!storedToken) return res.status(401).json(error('Invalid refresh token', ErrorCode.TOKEN_INVALID));
-  if (new Date(storedToken.expires_at) < new Date()) return res.status(401).json(error('Refresh token expired', ErrorCode.TOKEN_EXPIRED));
 
   const user: any = db.prepare('SELECT * FROM users WHERE id = ?').get(storedToken.user_id);
   if (!user || !user.is_active) return res.status(401).json(error('User not found or inactive', ErrorCode.ACCOUNT_DISABLED));
 
+  // Sign new access token
   const accessToken = jwt.sign(
     { id: user.id, username: user.username, is_admin: user.is_admin, tenant_id: user.tenant_id },
     config.JWT_SECRET,
-    { expiresIn: '15m' }
+    { expiresIn: config.JWT_EXPIRES_IN as any }
   );
-  const accessExpiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-  db.prepare('INSERT INTO access_tokens (id, token, client_id, user_id, expires_at) VALUES (?, ?, ?, ?, ?)').run(
-    crypto.randomUUID(), accessToken, storedToken.client_id || 'system', user.id, accessExpiresAt
-  );
+  const accessExpiresAt = new Date(Date.now() + 3600 * 1000).toISOString();
 
-  const newRefreshToken = crypto.randomBytes(32).toString('hex');
+  // Rotate refresh token
   const refreshDays = storedToken.remember_me === 1 ? 30 : 7;
   const newExpiresAt = new Date(Date.now() + refreshDays * 24 * 60 * 60 * 1000).toISOString();
+  const newRefreshToken = crypto.randomBytes(32).toString('hex');
 
   db.prepare('UPDATE refresh_tokens SET revoked = 1 WHERE id = ?').run(storedToken.id);
   db.prepare('INSERT INTO refresh_tokens (id, token, user_id, client_id, expires_at, remember_me) VALUES (?, ?, ?, ?, ?, ?)').run(
     crypto.randomUUID(), newRefreshToken, user.id, storedToken.client_id, newExpiresAt, storedToken.remember_me || 0
   );
 
-  logAudit(user.id, 'TOKEN_REFRESH', req);
+  logAudit(user.id, 'TOKEN_REFRESH', req, '', user.tenant_id);
 
   res.json(success({
     access_token: accessToken,
     refresh_token: newRefreshToken,
-    expires_in: 86400,
+    expires_at: accessExpiresAt
   }));
 });
 

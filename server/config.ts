@@ -18,6 +18,8 @@ const EnvSchema = z.object({
   GITHUB_CLIENT_SECRET: z.string().optional(),
   GITHUB_CALLBACK_URL: z.url().optional(),
   ENCRYPTION_KEY: z.string().min(32).optional(),
+  DB_PATH: z.string().default('auth.db'),
+  JWT_EXPIRES_IN: z.string().default('1h'),
 });
 
 const _env = EnvSchema.safeParse(process.env);

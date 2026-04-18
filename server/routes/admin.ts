@@ -188,19 +188,24 @@ router.post('/users/:userId/reset-password', authenticateAdmin, validate({ param
 
 // GET /api/admin/clients
 router.get('/clients', authenticateAdmin, (req, res) => {
-  const clients = db.prepare('SELECT id, client_id, client_name, redirect_uris, grant_types, created_at FROM clients ORDER BY created_at DESC').all();
+  const tenantId = (req as any).tenantId;
+  const clients = db.prepare('SELECT id, client_id, client_name, redirect_uris, grant_types, tenant_id, created_at FROM clients WHERE tenant_id = ? ORDER BY created_at DESC').all(tenantId);
   res.json(success(clients));
 });
 
 // POST /api/admin/clients
 router.post('/clients', authenticateAdmin, validate({ body: createClientSchema }), (req, res) => {
   const { client_name, redirect_uris, grant_types } = req.body;
+  const tenantId = (req as any).tenantId;
   const client_id = crypto.randomBytes(8).toString('hex');
   const client_secret = crypto.randomBytes(16).toString('hex');
+  const id = crypto.randomUUID();
 
-  db.prepare('INSERT INTO clients (id, client_id, client_secret, client_name, redirect_uris, grant_types) VALUES (?, ?, ?, ?, ?, ?)').run(
-    crypto.randomUUID(), client_id, client_secret, client_name, redirect_uris, grant_types || 'authorization_code'
+  db.prepare('INSERT INTO clients (id, client_id, client_secret, client_name, redirect_uris, grant_types, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+    id, client_id, client_secret, client_name, redirect_uris, grant_types || 'authorization_code', tenantId
   );
+  
+  logAudit((req as any).user.id, 'admin_create_client', req, JSON.stringify({ client_id, client_name }), tenantId);
   res.json(success({ client_id, client_secret }, 'Client created successfully'));
 });
 
@@ -208,8 +213,9 @@ router.post('/clients', authenticateAdmin, validate({ body: createClientSchema }
 router.put('/clients/:clientId', authenticateAdmin, validate({ params: clientIdParamsSchema, body: updateClientSchema }), (req, res) => {
   const { clientId } = req.params;
   const updates = req.body;
-
-  const client = db.prepare('SELECT id FROM clients WHERE client_id = ?').get(clientId);
+  const tenantId = (req as any).tenantId;
+ 
+  const client = db.prepare('SELECT id FROM clients WHERE client_id = ? AND tenant_id = ?').get(clientId, tenantId);
   if (!client) return res.status(404).json(error('Client not found', ErrorCode.RESOURCE_NOT_FOUND));
 
   const setClauses: string[] = [];
@@ -224,42 +230,45 @@ router.put('/clients/:clientId', authenticateAdmin, validate({ params: clientIdP
 
   if (setClauses.length === 0) return res.status(400).json(error('No fields to update', ErrorCode.VALIDATION_ERROR));
 
-  params.push(clientId);
-  db.prepare(`UPDATE clients SET ${setClauses.join(', ')} WHERE client_id = ?`).run(...params);
-
-  logAudit((req as any).user.id, 'admin_update_client', req, JSON.stringify({ client_id: clientId }));
+  params.push(clientId, tenantId);
+  db.prepare(`UPDATE clients SET ${setClauses.join(', ')} WHERE client_id = ? AND tenant_id = ?`).run(...params);
+ 
+  logAudit((req as any).user.id, 'admin_update_client', req, JSON.stringify({ client_id: clientId }), tenantId);
   res.json(message('Client updated successfully'));
 });
 
 // DELETE /api/admin/clients/:clientId
 router.delete('/clients/:clientId', authenticateAdmin, validate({ params: clientIdParamsSchema }), (req, res) => {
   const { clientId } = req.params;
-
-  const client = db.prepare('SELECT id FROM clients WHERE client_id = ?').get(clientId);
+  const tenantId = (req as any).tenantId;
+ 
+  const client = db.prepare('SELECT id FROM clients WHERE client_id = ? AND tenant_id = ?').get(clientId, tenantId);
   if (!client) return res.status(404).json(error('Client not found', ErrorCode.RESOURCE_NOT_FOUND));
-
-  db.prepare('DELETE FROM clients WHERE client_id = ?').run(clientId);
-  logAudit((req as any).user.id, 'admin_delete_client', req, JSON.stringify({ client_id: clientId }));
+ 
+  db.prepare('DELETE FROM clients WHERE client_id = ? AND tenant_id = ?').run(clientId, tenantId);
+  logAudit((req as any).user.id, 'admin_delete_client', req, JSON.stringify({ client_id: clientId }), tenantId);
   res.json(message('Client deleted successfully'));
 });
 
 // POST /api/admin/clients/:clientId/rotate-secret
 router.post('/clients/:clientId/rotate-secret', authenticateAdmin, validate({ params: clientIdParamsSchema }), (req, res) => {
   const { clientId } = req.params;
-
-  const client = db.prepare('SELECT id FROM clients WHERE client_id = ?').get(clientId);
+  const tenantId = (req as any).tenantId;
+ 
+  const client = db.prepare('SELECT id FROM clients WHERE client_id = ? AND tenant_id = ?').get(clientId, tenantId);
   if (!client) return res.status(404).json(error('Client not found', ErrorCode.RESOURCE_NOT_FOUND));
-
+ 
   const newSecret = crypto.randomBytes(16).toString('hex');
-  db.prepare('UPDATE clients SET client_secret = ? WHERE client_id = ?').run(newSecret, clientId);
-
-  logAudit((req as any).user.id, 'admin_rotate_client_secret', req, JSON.stringify({ client_id: clientId }));
+  db.prepare('UPDATE clients SET client_secret = ? WHERE client_id = ? AND tenant_id = ?').run(newSecret, clientId, tenantId);
+ 
+  logAudit((req as any).user.id, 'admin_rotate_client_secret', req, JSON.stringify({ client_id: clientId }), tenantId);
   res.json(success({ client_secret: newSecret }, 'Secret rotated successfully'));
 });
 
 // GET /api/admin/audit
 router.get('/audit', authenticateAdmin, (req, res) => {
   const { action, user_id, start_date, end_date, page = '1', pageSize = '50' } = req.query;
+  const tenantId = (req as any).tenantId;
 
   const pageNum = Math.max(1, parseInt(page as string) || 1);
   const pageSizeNum = Math.min(200, Math.max(1, parseInt(pageSize as string) || 50));

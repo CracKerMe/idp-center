@@ -14,6 +14,9 @@ export default function Authorize({ user }: { user: any }) {
   const responseType = searchParams.response_type;
   const state = searchParams.state;
   const scope = searchParams.scope;
+  const codeChallenge = searchParams.code_challenge;
+  const codeChallengeMethod = searchParams.code_challenge_method;
+  const nonce = searchParams.nonce;
 
   useEffect(() => {
     if (!clientId || !redirectUri || !responseType) {
@@ -21,7 +24,14 @@ export default function Authorize({ user }: { user: any }) {
       return;
     }
 
-    fetch(`/api/oidc/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=${responseType}&state=${state}&scope=${scope}`)
+    let url = `/api/oidc/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=${responseType}`;
+    if (state) url += `&state=${state}`;
+    if (scope) url += `&scope=${scope}`;
+    if (codeChallenge) url += `&code_challenge=${codeChallenge}`;
+    if (codeChallengeMethod) url += `&code_challenge_method=${codeChallengeMethod}`;
+    if (nonce) url += `&nonce=${nonce}`;
+
+    fetch(url)
       .then(res => parseApiResponse(res))
       .then(result => {
         if (isSuccess(result) && result.data) {
@@ -52,7 +62,11 @@ export default function Authorize({ user }: { user: any }) {
         client_id: clientId,
         redirect_uri: redirectUri,
         response_type: responseType,
-        state
+        state,
+        scope,
+        code_challenge: codeChallenge,
+        code_challenge_method: codeChallengeMethod,
+        nonce
       })
     });
 

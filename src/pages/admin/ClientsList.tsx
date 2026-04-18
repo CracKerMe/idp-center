@@ -63,7 +63,7 @@ export default function ClientsList() {
     e.preventDefault();
     if (!editingClient) return;
     setEditError('');
-    const res = await authFetch(`/api/admin/clients/${editingClient.id}`, {
+    const res = await authFetch(`/api/admin/clients/${editingClient.client_id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(editForm),
@@ -75,7 +75,7 @@ export default function ClientsList() {
 
   const handleDelete = async (client: Client) => {
     if (!confirm(`Delete client "${client.client_name}"? This cannot be undone.`)) return;
-    const res = await authFetch(`/api/admin/clients/${client.id}`, { method: 'DELETE' });
+    const res = await authFetch(`/api/admin/clients/${client.client_id}`, { method: 'DELETE' });
     const result = await parseApiResponse(res);
     if (isSuccess(result)) fetchClients();
     else alert(getErrorMessage(result));
@@ -83,7 +83,7 @@ export default function ClientsList() {
 
   const handleRotateSecret = async (client: Client) => {
     if (!confirm(`Rotate secret for "${client.client_name}"? The old secret will stop working immediately.`)) return;
-    const res = await authFetch(`/api/admin/clients/${client.id}/rotate-secret`, { method: 'POST' });
+    const res = await authFetch(`/api/admin/clients/${client.client_id}/rotate-secret`, { method: 'POST' });
     const result = await parseApiResponse<{ client_secret: string }>(res);
     if (isSuccess(result) && result.data) {
       setRotatedSecret({ clientId: client.client_id, secret: result.data.client_secret });
