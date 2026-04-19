@@ -158,7 +158,7 @@ async function handleSubmit() {
           </router-link>
         </p>
         <p style="font-size: 0.875rem;">
-          Default: admin / admin123
+          Default: admin / Admin@IdpCenter2024!
         </p>
       </div>
     </div>

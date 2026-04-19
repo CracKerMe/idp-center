@@ -164,7 +164,25 @@ for (const migration of migrations) {
 }
 
 // Special Migration: Fix User constraints (from global UNIQUE to per-tenant UNIQUE)
+// Guard: only run if users table still has single-column unique indexes (pre-migration state)
 try {
+  // First check: if users_old exists, a previous migration attempt was interrupted — clean it up
+  const usersOldExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users_old'").get();
+  if (usersOldExists) {
+    console.log("Migration: Found leftover users_old table from interrupted migration, cleaning up...");
+    // Check if the new users table was successfully created
+    const usersExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users'").get();
+    if (usersExists) {
+      // New users table exists — migration completed but users_old wasn't dropped
+      db.exec(`DROP TABLE users_old`);
+      console.log("Migration: Dropped leftover users_old table.");
+    } else {
+      // New users table doesn't exist — migration failed mid-way, restore from users_old
+      db.exec(`ALTER TABLE users_old RENAME TO users`);
+      console.log("Migration: Restored users table from users_old.");
+    }
+  }
+
   const tableInfo = db.prepare("PRAGMA index_list(users)").all() as any[];
   let hasGlobalUnique = false;
   
@@ -183,8 +201,8 @@ try {
   if (hasGlobalUnique) {
     console.log("Migration: Updating users table constraints for multi-tenancy...");
     db.transaction(() => {
+      db.exec(`ALTER TABLE users RENAME TO users_old`);
       db.exec(`
-        ALTER TABLE users RENAME TO users_old;
         CREATE TABLE users (
           id TEXT PRIMARY KEY,
           username TEXT NOT NULL,
@@ -207,11 +225,13 @@ try {
           email_verified_at DATETIME,
           UNIQUE(username, tenant_id),
           UNIQUE(email, tenant_id)
-        );
-        INSERT INTO users (id, username, email, password_hash, tenant_id, is_active, is_admin, otp_secret, otp_enabled, created_at, updated_at, full_name, avatar_url, phone, password_changed_at, failed_login_attempts, locked_until, email_verified, email_verified_at)
-        SELECT id, username, email, password_hash, COALESCE(tenant_id, 'default'), is_active, is_admin, otp_secret, otp_enabled, created_at, updated_at, full_name, avatar_url, phone, password_changed_at, failed_login_attempts, locked_until, email_verified, email_verified_at FROM users_old;
-        DROP TABLE users_old;
+        )
       `);
+      db.exec(`
+        INSERT INTO users (id, username, email, password_hash, tenant_id, is_active, is_admin, otp_secret, otp_enabled, created_at, updated_at, full_name, avatar_url, phone, password_changed_at, failed_login_attempts, locked_until, email_verified, email_verified_at)
+        SELECT id, username, email, password_hash, COALESCE(tenant_id, 'default'), is_active, is_admin, otp_secret, otp_enabled, created_at, updated_at, full_name, avatar_url, phone, password_changed_at, failed_login_attempts, locked_until, email_verified, email_verified_at FROM users_old
+      `);
+      db.exec(`DROP TABLE users_old`);
     })();
     console.log("Migration: Users table refactored successfully.");
   }
@@ -285,9 +305,12 @@ if (!tenantExists) {
 }
 
 // Seed admin user
+// ⚠️  DEVELOPMENT DEFAULT ONLY — change this password immediately in production.
+//     Default: Admin@IdpCenter2024!
+//     Must satisfy the password policy: uppercase, lowercase, digit, special char, min 8 chars.
 const adminExists = db.prepare('SELECT id FROM users WHERE username = ?').get('admin');
 if (!adminExists) {
-  const hash = bcrypt.hashSync('admin123', 10);
+  const hash = bcrypt.hashSync('Admin@IdpCenter2024!', 10);
   db.prepare('INSERT INTO users (id, tenant_id, username, email, password_hash, is_admin, email_verified, email_verified_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?)').run(
     crypto.randomUUID(), 'default', 'admin', 'admin@example.com', hash, 1, new Date().toISOString()
   );
@@ -299,4 +322,47 @@ if (!clientExists) {
   db.prepare('INSERT INTO clients (id, client_id, client_secret, client_name, redirect_uris, grant_types) VALUES (?, ?, ?, ?, ?, ?)').run(
     crypto.randomUUID(), 'default-client', 'secret123', 'Default Client', 'http://localhost:5986/callback,http://localhost:3000/callback', 'authorization_code'
   );
+}
+
+// P0 安全合规基座：新增表
+db.exec(`
+  CREATE TABLE IF NOT EXISTS tenant_password_policies (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL UNIQUE,
+    min_length INTEGER NOT NULL DEFAULT 8,
+    history_count INTEGER NOT NULL DEFAULT 5,
+    rotation_enabled INTEGER NOT NULL DEFAULT 0,
+    rotation_period_days INTEGER NOT NULL DEFAULT 90,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS password_history (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS tenant_ip_whitelist (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    cidr TEXT NOT NULL,
+    description TEXT,
+    created_by TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+    UNIQUE (tenant_id, cidr)
+  );
+`);
+
+// P0 安全合规基座：新增索引
+try {
+  db.exec('CREATE INDEX IF NOT EXISTS idx_password_history_user ON password_history(user_id, created_at)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_ip_whitelist_tenant ON tenant_ip_whitelist(tenant_id)');
+} catch (err) {
+  // Index might already exist
 }

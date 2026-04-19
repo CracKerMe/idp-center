@@ -91,3 +91,12 @@ export const passwordChangeSchema = z.object({
 });
 
 export type PasswordChangeInput = z.infer<typeof passwordChangeSchema>;
+
+// Change expired password schema
+export const changeExpiredPasswordSchema = z.object({
+  username: z.string().min(1),
+  current_password: z.string().min(1),
+  new_password: z.string().min(1),
+});
+
+export type ChangeExpiredPasswordInput = z.infer<typeof changeExpiredPasswordSchema>;

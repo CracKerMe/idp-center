@@ -43,7 +43,8 @@ describe('Auth API Integration', () => {
       'access_tokens',
       'trusted_devices',
       'linked_accounts',
-      'account_deletion_requests'
+      'account_deletion_requests',
+      'password_history',
     ];
     for (const table of tables) {
       db.prepare(`DELETE FROM ${table}`).run();

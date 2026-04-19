@@ -9,6 +9,7 @@ import { config, SECURITY_CONFIG } from '../config.js';
 import { emailService } from '../services/email.service.js';
 import { logAudit } from '../utils/audit.js';
 import { validatePasswordStrength } from '../utils/password.js';
+import { isPasswordExpired, validatePassword, recordPasswordHistory } from '../services/password-policy.service.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { success, error, message, ErrorCode } from '../utils/response.js';
@@ -24,6 +25,7 @@ import {
   passwordResetSchema,
   tokenRefreshSchema,
   passwordValidateSchema,
+  changeExpiredPasswordSchema,
 } from '../validators/auth.validator.js';
 
 const router = express.Router();
@@ -36,20 +38,21 @@ function computeDeviceFingerprint(userAgent: string, ip: string): string {
 // POST /api/auth/register
 router.post('/register', validate({ body: registerSchema }), (req, res) => {
   const { username, email, password } = req.body;
+  const tenantId = (req as any).tenantId;
 
-  const strength = validatePasswordStrength(password);
-  if (!strength.valid) {
+  const result = validatePassword(password, null, tenantId);
+  if (!result.valid) {
     return res.status(400).json({
       ...error('Password does not meet requirements', ErrorCode.VALIDATION_PASSWORD_WEAK),
-      details: strength.errors,
+      details: result.violations,
     });
   }
 
   try {
     const hash = bcrypt.hashSync(password, 10);
     const id = crypto.randomUUID();
-    const tenantId = (req as any).tenantId;
     db.prepare('INSERT INTO users (id, username, email, password_hash, tenant_id) VALUES (?, ?, ?, ?, ?)').run(id, username, email, hash, tenantId);
+    recordPasswordHistory(id, hash, tenantId);
     logAudit(id, 'REGISTER', req, `Registered ${username}`, tenantId);
 
     const verificationToken = crypto.randomUUID();
@@ -145,6 +148,18 @@ router.post('/login', validate({ body: loginSchema }), (req, res) => {
   ).get(user.id);
   if (pendingDeletion) {
     return res.status(403).json(error('Account pending deletion', ErrorCode.ACCOUNT_PENDING_DELETION));
+  }
+
+  // Check password expiry before issuing tokens (Requirements 4.1, 4.4)
+  const expiryCheck = isPasswordExpired(user.password_changed_at, tenantId);
+  if (expiryCheck.expired) {
+    return res.status(403).json({
+      ...error('Password has expired', ErrorCode.PASSWORD_EXPIRED),
+      data: {
+        password_changed_at: user.password_changed_at,
+        expires_at: expiryCheck.expiresAt,
+      },
+    });
   }
 
   const accessToken = jwt.sign(
@@ -395,26 +410,29 @@ router.post('/password/reset-verify', validate({ body: passwordResetVerifySchema
 router.post('/password/reset', validate({ body: passwordResetSchema }), (req, res) => {
   const { token, new_password } = req.body;
 
-  const strength = validatePasswordStrength(new_password);
-  if (!strength.valid) {
-    return res.status(400).json({
-      ...error('Password does not meet requirements', ErrorCode.VALIDATION_PASSWORD_WEAK),
-      details: strength.errors,
-    });
-  }
-
   const reset: any = db.prepare('SELECT * FROM password_resets WHERE token = ? AND used = 0').get(token);
   if (!reset) return res.status(400).json(error('Invalid or used token', ErrorCode.TOKEN_INVALID));
   if (new Date(reset.expires_at) < new Date()) return res.status(400).json(error('Token expired', ErrorCode.TOKEN_EXPIRED));
 
+  const user: any = db.prepare('SELECT tenant_id FROM users WHERE id = ?').get(reset.user_id);
+  const tenantId = user?.tenant_id || 'default';
+
+  const result = validatePassword(new_password, reset.user_id, tenantId);
+  if (!result.valid) {
+    return res.status(400).json({
+      ...error('Password does not meet requirements', ErrorCode.VALIDATION_PASSWORD_WEAK),
+      details: result.violations,
+    });
+  }
+
   const hash = bcrypt.hashSync(new_password, 10);
   db.prepare('UPDATE users SET password_hash = ?, password_changed_at = ? WHERE id = ?').run(hash, new Date().toISOString(), reset.user_id);
   db.prepare('UPDATE password_resets SET used = 1 WHERE id = ?').run(reset.id);
-  
+  recordPasswordHistory(reset.user_id, hash, tenantId);
+
   db.prepare('UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ?').run(reset.user_id);
-  
-  const user: any = db.prepare('SELECT tenant_id FROM users WHERE id = ?').get(reset.user_id);
-  logAudit(reset.user_id, 'PASSWORD_RESET_COMPLETE', req, 'Password has been reset', user?.tenant_id || 'default');
+
+  logAudit(reset.user_id, 'PASSWORD_RESET_COMPLETE', req, 'Password has been reset', tenantId);
   res.json(message('Password has been reset successfully'));
 });
 
@@ -453,6 +471,58 @@ router.post('/refresh', validate({ body: tokenRefreshSchema }), (req, res) => {
     refresh_token: newRefreshToken,
     expires_at: accessExpiresAt
   }));
+});
+
+// POST /api/auth/password/change-expired
+// Allows users with an expired password to change it without a full login session.
+// No authenticateToken middleware — identity is verified via username + current password.
+router.post('/password/change-expired', validate({ body: changeExpiredPasswordSchema }), (req, res) => {
+  const { username, current_password, new_password } = req.body;
+  const tenantId = (req as any).tenantId;
+
+  try {
+    // 1. Look up the user by username within the tenant
+    const user: any = db.prepare(
+      'SELECT * FROM users WHERE username = ? AND tenant_id = ?'
+    ).get(username, tenantId);
+
+    if (!user || !bcrypt.compareSync(current_password, user.password_hash)) {
+      return res.status(401).json(error('Invalid credentials', ErrorCode.AUTH_INVALID_CREDENTIALS));
+    }
+
+    // 2. Confirm tenant has rotation enabled and password is actually expired
+    const expiryCheck = isPasswordExpired(user.password_changed_at, tenantId);
+    if (!expiryCheck.expired) {
+      return res.status(403).json(error('Password is not expired', ErrorCode.VALIDATION_ERROR));
+    }
+
+    // 3. Validate the new password against the tenant policy
+    const validationResult = validatePassword(new_password, user.id, tenantId);
+    if (!validationResult.valid) {
+      return res.status(400).json({
+        ...error('Password does not meet requirements', ErrorCode.VALIDATION_PASSWORD_WEAK),
+        details: validationResult.violations,
+      });
+    }
+
+    // 4. Update password_hash and password_changed_at
+    const newHash = bcrypt.hashSync(new_password, 10);
+    const now = new Date().toISOString();
+    db.prepare(
+      'UPDATE users SET password_hash = ?, password_changed_at = ? WHERE id = ?'
+    ).run(newHash, now, user.id);
+
+    // 5. Record the new password in history
+    recordPasswordHistory(user.id, newHash, tenantId);
+
+    // 6. Write audit log
+    logAudit(user.id, 'PASSWORD_CHANGED_EXPIRED', req, `Expired password changed for ${username}`, tenantId);
+
+    return res.json(message('Password changed successfully'));
+  } catch (err: any) {
+    console.error('change-expired password error:', err);
+    return res.status(500).json(error('Internal server error', ErrorCode.SERVER_ERROR));
+  }
 });
 
 export default router;

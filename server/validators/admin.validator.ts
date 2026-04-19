@@ -95,3 +95,21 @@ export const updateTenantSchema = z.object({
 });
 
 export type UpdateTenantInput = z.infer<typeof updateTenantSchema>;
+
+// Password policy schema (Requirements 5.4)
+export const passwordPolicySchema = z.object({
+  min_length: z.number().int().min(6).max(128),
+  history_count: z.number().int().min(1).max(24),
+  rotation_enabled: z.boolean(),
+  rotation_period_days: z.number().int().min(1).max(365),
+});
+
+export type PasswordPolicyInput = z.infer<typeof passwordPolicySchema>;
+
+// IP whitelist entry schema (Requirements 6.2)
+export const ipWhitelistEntrySchema = z.object({
+  cidr: z.string().min(1),
+  description: z.string().max(255).optional(),
+});
+
+export type IpWhitelistEntryInput = z.infer<typeof ipWhitelistEntrySchema>;

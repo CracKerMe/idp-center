@@ -185,7 +185,7 @@ example/
 ## 默认账号
 
 - **用户名**: admin
-- **密码**: admin123
+- **密码**: Admin@IdpCenter2024!
 
 ## 配置说明
 

@@ -16,6 +16,7 @@ import githubRouter from './server/routes/github.js';
 import { db } from './server/database.js';
 
 import { tenantContext } from './server/middleware/tenant.js';
+import { ipWhitelistGuard } from './server/middleware/ip-whitelist.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const app = express();
@@ -44,6 +45,7 @@ app.use(helmet({
 
 app.use(express.json());
 app.use('/api', tenantContext);
+app.use('/api', ipWhitelistGuard);
 
 // Serve uploaded avatars
 const uploadsDir = path.join(rootDir, 'uploads', 'avatars');

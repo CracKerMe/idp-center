@@ -9,6 +9,8 @@ import { authenticateAdmin } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { success, error, message, paginated, ErrorCode } from '../utils/response.js';
 import { revokeAllUserTokens, RevokeReason } from '../utils/token-blacklist.js';
+import { getTenantPasswordPolicy } from '../services/password-policy.service.js';
+import { parseCidr } from '../middleware/ip-whitelist.js';
 import {
   userIdParamsSchema,
   adminCreateUserSchema,
@@ -20,6 +22,8 @@ import {
   tenantIdParamsSchema,
   createTenantSchema,
   updateTenantSchema,
+  passwordPolicySchema,
+  ipWhitelistEntrySchema,
 } from '../validators/admin.validator.js';
 
 const router = express.Router();
@@ -426,6 +430,105 @@ router.delete('/sessions/:id', authenticateAdmin, (req, res) => {
 router.post('/maintenance/cleanup-tokens', authenticateAdmin, (req, res) => {
   const result = cleanupExpiredTokens();
   res.json(success(result, 'Token cleanup completed'));
+});
+
+// GET /api/admin/tenants/:tenantId/password-policy
+router.get('/tenants/:tenantId/password-policy', authenticateAdmin, validate({ params: tenantIdParamsSchema }), (req, res) => {
+  const { tenantId } = req.params;
+  const policy = getTenantPasswordPolicy(tenantId);
+
+  // Fetch updated_at from DB if a custom policy exists
+  const row = db.prepare('SELECT tenant_id, updated_at FROM tenant_password_policies WHERE tenant_id = ?').get(tenantId) as
+    | { tenant_id: string; updated_at: string | null }
+    | undefined;
+
+  res.json(success({
+    tenant_id: tenantId,
+    ...policy,
+    updated_at: row?.updated_at ?? null,
+  }));
+});
+
+// PUT /api/admin/tenants/:tenantId/password-policy
+router.put('/tenants/:tenantId/password-policy', authenticateAdmin, validate({ params: tenantIdParamsSchema, body: passwordPolicySchema }), (req, res) => {
+  const { tenantId } = req.params;
+  const { min_length, history_count, rotation_enabled, rotation_period_days } = req.body;
+
+  db.prepare(`
+    INSERT INTO tenant_password_policies (id, tenant_id, min_length, history_count, rotation_enabled, rotation_period_days, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(tenant_id) DO UPDATE SET
+      min_length = excluded.min_length,
+      history_count = excluded.history_count,
+      rotation_enabled = excluded.rotation_enabled,
+      rotation_period_days = excluded.rotation_period_days,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(
+    crypto.randomUUID(),
+    tenantId,
+    min_length,
+    history_count,
+    rotation_enabled ? 1 : 0,
+    rotation_period_days,
+  );
+
+  res.json(message('Password policy updated successfully'));
+});
+
+// GET /api/admin/tenants/:tenantId/ip-whitelist
+router.get('/tenants/:tenantId/ip-whitelist', authenticateAdmin, validate({ params: tenantIdParamsSchema }), (req, res) => {
+  const { tenantId } = req.params;
+  const entries = db.prepare(
+    'SELECT id, cidr, description, created_by, created_at FROM tenant_ip_whitelist WHERE tenant_id = ? ORDER BY created_at ASC'
+  ).all(tenantId);
+  res.json(success(entries));
+});
+
+// POST /api/admin/tenants/:tenantId/ip-whitelist
+router.post('/tenants/:tenantId/ip-whitelist', authenticateAdmin, validate({ params: tenantIdParamsSchema, body: ipWhitelistEntrySchema }), (req, res) => {
+  const { tenantId } = req.params;
+  const { cidr, description } = req.body;
+
+  // Validate CIDR format
+  if (!parseCidr(cidr)) {
+    return res.status(400).json(error('Invalid CIDR format', ErrorCode.INVALID_CIDR_FORMAT));
+  }
+
+  const id = crypto.randomUUID();
+  const createdBy = (req as any).user?.id || null;
+
+  try {
+    db.prepare(
+      'INSERT INTO tenant_ip_whitelist (id, tenant_id, cidr, description, created_by) VALUES (?, ?, ?, ?, ?)'
+    ).run(id, tenantId, cidr, description || null, createdBy);
+  } catch (err: any) {
+    if (err.message && err.message.includes('UNIQUE constraint failed')) {
+      return res.status(409).json(error('CIDR already exists for this tenant', ErrorCode.CIDR_ALREADY_EXISTS));
+    }
+    return res.status(500).json(error('Internal server error', ErrorCode.SERVER_ERROR));
+  }
+
+  logAudit(createdBy, 'IP_WHITELIST_ADDED', req, JSON.stringify({ tenant_id: tenantId, cidr, description }), tenantId);
+  res.status(201).json(success({ id }, 'IP whitelist entry added'));
+});
+
+// DELETE /api/admin/tenants/:tenantId/ip-whitelist/:entryId
+router.delete('/tenants/:tenantId/ip-whitelist/:entryId', authenticateAdmin, (req, res) => {
+  const { tenantId, entryId } = req.params;
+
+  const entry = db.prepare(
+    'SELECT id FROM tenant_ip_whitelist WHERE id = ? AND tenant_id = ?'
+  ).get(entryId, tenantId);
+
+  if (!entry) {
+    return res.status(404).json(error('IP whitelist entry not found', ErrorCode.RESOURCE_NOT_FOUND));
+  }
+
+  db.prepare('DELETE FROM tenant_ip_whitelist WHERE id = ? AND tenant_id = ?').run(entryId, tenantId);
+
+  const userId = (req as any).user?.id || null;
+  logAudit(userId, 'IP_WHITELIST_REMOVED', req, JSON.stringify({ tenant_id: tenantId, entry_id: entryId }), tenantId);
+  res.json(message('IP whitelist entry removed'));
 });
 
 export default router;

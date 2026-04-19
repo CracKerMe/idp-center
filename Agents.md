@@ -90,7 +90,7 @@
 `server/database.ts` 会在本地自动建立并迁移数据库，同时种子以下默认对象：
 
 - 默认租户：`default`
-- 默认管理员：`admin / admin123`
+- 默认管理员：`admin / Admin@IdpCenter2024!`（⚠️ 仅开发默认值，生产环境请立即修改）
 - 默认客户端：
   - `client_id = default-client`
   - `client_secret = secret123`

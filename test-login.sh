@@ -10,7 +10,7 @@ echo ""
 echo "1️⃣ 测试登录 API..."
 LOGIN_RESPONSE=$(curl -s -X POST http://localhost:5986/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"admin123"}')
+  -d '{"username":"admin","password":"Admin@IdpCenter2024!"}')
 
 echo "登录响应："
 echo "$LOGIN_RESPONSE" | python3 -m json.tool 2>/dev/null || echo "$LOGIN_RESPONSE"

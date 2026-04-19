@@ -4,6 +4,13 @@ export interface PasswordStrength {
   errors: string[];
 }
 
+/**
+ * @deprecated 请使用 PasswordPolicyEngine.validatePassword()
+ * @see validatePassword from 'server/services/password-policy.service.ts'
+ *
+ * Kept for backward compatibility. Use `validatePassword` from
+ * `server/services/password-policy.service.ts` for tenant-aware policy enforcement.
+ */
 export function validatePasswordStrength(password: string): PasswordStrength {
   const errors: string[] = [];
   let score = 0;
