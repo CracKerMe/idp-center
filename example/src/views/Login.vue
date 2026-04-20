@@ -29,16 +29,35 @@ function generateNonce() {
     .join('')
 }
 
-function startOAuthFlow(returnTo?: string) {
+async function generatePKCE() {
+  const array = new Uint8Array(32)
+  crypto.getRandomValues(array)
+  const verifier = btoa(String.fromCharCode.apply(null, Array.from(array)))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=/g, '')
+
+  const encoder = new TextEncoder()
+  const data = encoder.encode(verifier)
+  const hash = await crypto.subtle.digest('SHA-256', data)
+  const challenge = btoa(String.fromCharCode.apply(null, Array.from(new Uint8Array(hash))))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=/g, '')
+
+  return { verifier, challenge }
+}
+
+async function startOAuthFlow(returnTo?: string) {
   const clientId = 'default-client'
   const redirectUri = 'http://localhost:3000/callback'
-
   const nonce = generateNonce()
   const resolvedReturnTo = safeReturnTo(returnTo)
+  const { verifier, challenge } = await generatePKCE()
 
   sessionStorage.setItem(
     `oauth_state:${nonce}`,
-    JSON.stringify({ nonce, return_to: resolvedReturnTo, iat: Date.now() })
+    JSON.stringify({ nonce, return_to: resolvedReturnTo, verifier, iat: Date.now() })
   )
 
   const params = new URLSearchParams({
@@ -46,7 +65,9 @@ function startOAuthFlow(returnTo?: string) {
     redirect_uri: redirectUri,
     response_type: 'code',
     scope: 'openid profile email',
-    state: nonce
+    state: nonce,
+    code_challenge: challenge,
+    code_challenge_method: 'S256'
   })
 
   window.location.href = `http://localhost:5986/#/authorize?${params.toString()}`
@@ -65,15 +86,13 @@ async function handleSubmit() {
     const success = await authStore.login(username.value, password.value, otp.value || undefined)
 
     if (success) {
-      console.log('Login successful, redirecting...')
       const redirect = route.query.redirect as string
       await router.push(redirect || '/dashboard')
     }
   } catch (err: any) {
-    console.error('Login error:', err)
     if (err.message === 'OTP_REQUIRED') {
       requireOtp.value = true
-      error.value = 'Please enter your authenticator code'
+      error.value = 'Security: Please enter your authenticator code'
     } else {
       error.value = err.message
     }
@@ -84,83 +103,147 @@ async function handleSubmit() {
 </script>
 
 <template>
-  <div style="max-width: 400px; margin: 3rem auto;">
-    <div class="card">
-      <h2 style="font-size: 1.875rem; font-weight: 700; text-align: center; margin-bottom: 2rem;">
-        Sign In
-      </h2>
-      
-      <form @submit.prevent="handleSubmit">
-        <div v-if="error" class="error-message" style="margin-bottom: 1rem; text-align: center;">
-          {{ error }}
+  <div class="auth-page-background">
+    <div class="auth-container">
+      <div class="premium-card glass-v2">
+        <div class="text-center mb-8">
+          <div class="header-logo" style="justify-content: center; margin-bottom: var(--space-4);">
+            <span style="font-size: 2rem;">🛡️</span> IDP Center
+          </div>
+          <h2 class="mb-2">Welcome Back</h2>
+          <p class="text-sm text-muted">Sign in to access your secure identity portal.</p>
         </div>
         
-        <div class="form-group">
-          <label class="form-label">Username</label>
-          <input
-            v-model="username"
-            type="text"
-            class="form-input"
-            required
-            placeholder="Enter your username"
-          />
-        </div>
-        
-        <div class="form-group">
-          <label class="form-label">Password</label>
-          <input
-            v-model="password"
-            type="password"
-            class="form-input"
-            required
-            placeholder="Enter your password"
-          />
-        </div>
-        
-        <div v-if="requireOtp" class="form-group">
-          <label class="form-label">Authenticator Code (OTP)</label>
-          <input
-            v-model="otp"
-            type="text"
-            class="form-input"
-            required
-            placeholder="6-digit code"
-            maxlength="6"
-          />
-        </div>
-        
-        <button
-          type="submit"
-          class="btn btn-primary"
-          style="width: 100%; margin-top: 1rem;"
-          :disabled="loading"
-        >
-          {{ loading ? 'Signing in...' : 'Sign In' }}
-        </button>
-      </form>
+        <form @submit.prevent="handleSubmit">
+          <transition name="fade">
+            <div v-if="error" class="error-message">
+              <span style="margin-right: 8px;">⚠️</span> {{ error }}
+            </div>
+          </transition>
+          
+          <div class="form-group">
+            <label class="form-label">Username</label>
+            <input
+              v-model="username"
+              type="text"
+              class="form-input"
+              required
+              placeholder="Enter your username"
+              autocomplete="username"
+            />
+          </div>
+          
+          <div class="form-group">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-2);">
+              <label class="form-label" style="margin-bottom: 0;">Password</label>
+              <router-link to="/forgot-password" class="text-xs font-bold" style="color: var(--primary-600); text-decoration: none;">
+                Forgot Secret?
+              </router-link>
+            </div>
+            <input
+              v-model="password"
+              type="password"
+              class="form-input"
+              required
+              placeholder="••••••••"
+              autocomplete="current-password"
+            />
+          </div>
+          
+          <transition name="slide-down">
+            <div v-if="requireOtp" class="form-group">
+              <label class="form-label">Authenticator Code (2FA)</label>
+              <input
+                v-model="otp"
+                type="text"
+                class="form-input"
+                required
+                placeholder="6-digit code"
+                maxlength="6"
+                autofocus
+              />
+            </div>
+          </transition>
+          
+          <button
+            type="submit"
+            class="btn btn-primary btn-glow"
+            style="width: 100%; margin-top: var(--space-4); height: 48px;"
+            :disabled="loading"
+          >
+            <span v-if="loading" class="spinner" style="width: 18px; height: 18px; border-width: 2px; margin-right: 8px;"></span>
+            {{ loading ? 'Verifying...' : 'Sign In' }}
+          </button>
+        </form>
 
-      <div style="margin-top: 1rem;">
-        <button
-          type="button"
-          class="btn btn-secondary"
-          style="width: 100%;"
-          @click="handleOAuthLogin"
-        >
-          Login with OAuth
-        </button>
-      </div>
+        <div class="separator mt-8 mb-8">
+          <span class="separator-text">or continue with</span>
+        </div>
 
-      <div style="margin-top: 1.5rem; text-align: center; color: #6b7280;">
-        <p style="margin-bottom: 0.5rem;">
-          Don't have an account?
-          <router-link to="/register" style="color: #4f46e5; text-decoration: none;">
-            Register
-          </router-link>
-        </p>
-        <p style="font-size: 0.875rem;">
-          Default: admin / Admin@IdpCenter2024!
-        </p>
+        <div>
+          <button
+            type="button"
+            class="btn btn-secondary"
+            style="width: 100%; height: 48px;"
+            @click="handleOAuthLogin"
+          >
+            <span style="margin-right: 8px;">🌐</span> Single Sign-On (SSO)
+          </button>
+        </div>
+
+        <div class="text-center mt-10">
+          <p class="text-sm">
+            New to the platform?
+            <router-link to="/register" style="color: var(--primary-600); text-decoration: none; font-weight: 800;">
+              Create Identity
+            </router-link>
+          </p>
+          <div style="margin-top: var(--space-6); padding: var(--space-4); background: var(--slate-50); border-radius: var(--radius-lg); border: 1px solid var(--slate-100);">
+            <p class="text-xs text-muted mb-0">
+              <strong>Dev Access:</strong> admin / Admin@IdpCenter2024!
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.separator {
+  position: relative;
+  text-align: center;
+}
+
+.separator::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--slate-200);
+}
+
+.separator-text {
+  position: relative;
+  background: white; /* Matches card bg in non-glass */
+  padding: 0 var(--space-4);
+  color: var(--slate-400);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.premium-card.glass-v2 .separator-text {
+  background: transparent;
+  backdrop-filter: blur(20px);
+}
+
+.fade-enter-active, .fade-leave-active { transition: opacity 0.3s ease; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
+
+.slide-down-enter-active { transition: all 0.3s ease-out; }
+.slide-down-enter-from { opacity: 0; transform: translateY(-10px); }
+</style>

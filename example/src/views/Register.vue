@@ -19,12 +19,12 @@ async function handleSubmit() {
   success.value = ''
   
   if (password.value !== confirmPassword.value) {
-    error.value = 'Passwords do not match'
+    error.value = 'Passwords do not match. Please verify.'
     return
   }
   
   if (password.value.length < 8) {
-    error.value = 'Password must be at least 8 characters'
+    error.value = 'Security requirement: Password must be at least 8 characters.'
     return
   }
   
@@ -32,7 +32,7 @@ async function handleSubmit() {
   
   try {
     await authStore.register(username.value, email.value, password.value)
-    success.value = 'Registration successful! You can now login.'
+    success.value = 'Identity created successfully! Synchronizing access...'
     
     setTimeout(() => {
       router.push('/login')
@@ -46,81 +46,101 @@ async function handleSubmit() {
 </script>
 
 <template>
-  <div style="max-width: 400px; margin: 3rem auto;">
-    <div class="card">
-      <h2 style="font-size: 1.875rem; font-weight: 700; text-align: center; margin-bottom: 2rem;">
-        Create Account
-      </h2>
-      
-      <form @submit.prevent="handleSubmit">
-        <div v-if="error" class="error-message" style="margin-bottom: 1rem;">
-          {{ error }}
+  <div class="auth-page-background">
+    <div class="auth-container">
+      <div class="premium-card glass-v2">
+        <div class="text-center mb-8">
+          <div class="header-logo" style="justify-content: center; margin-bottom: var(--space-4);">
+             <span style="font-size: 2rem;">✨</span> IDP Center
+          </div>
+          <h2 class="mb-2">Create Identity</h2>
+          <p class="text-sm text-muted">Join the world's most secure identity ecosystem.</p>
         </div>
         
-        <div v-if="success" class="success-message" style="margin-bottom: 1rem;">
-          {{ success }}
-        </div>
+        <form @submit.prevent="handleSubmit">
+          <transition name="fade">
+            <div v-if="error" class="error-message">
+              {{ error }}
+            </div>
+          </transition>
+          
+          <transition name="fade">
+            <div v-if="success" class="success-message">
+              {{ success }}
+            </div>
+          </transition>
+          
+          <div class="grid grid-2" style="gap: var(--space-4);">
+            <div class="form-group">
+              <label class="form-label">Username</label>
+              <input
+                v-model="username"
+                type="text"
+                class="form-input"
+                required
+                placeholder="Unique ID"
+              />
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label">Email</label>
+              <input
+                v-model="email"
+                type="email"
+                class="form-input"
+                required
+                placeholder="your@nexus.com"
+              />
+            </div>
+          </div>
+          
+          <div class="form-group">
+            <label class="form-label">Password</label>
+            <input
+              v-model="password"
+              type="password"
+              class="form-input"
+              required
+              placeholder="Minimum 8 characters"
+            />
+          </div>
+          
+          <div class="form-group">
+            <label class="form-label">Confirm Password</label>
+            <input
+              v-model="confirmPassword"
+              type="password"
+              class="form-input"
+              required
+              placeholder="Repeat your secret"
+            />
+          </div>
+          
+          <button
+            type="submit"
+            class="btn btn-primary btn-glow"
+            style="width: 100%; margin-top: var(--space-4); height: 48px;"
+            :disabled="loading"
+          >
+            <span v-if="loading" class="spinner" style="width: 18px; height: 18px; border-width: 2px; margin-right: 8px;"></span>
+            {{ loading ? 'Provisioning...' : 'Initialize Account' }}
+          </button>
+        </form>
         
-        <div class="form-group">
-          <label class="form-label">Username</label>
-          <input
-            v-model="username"
-            type="text"
-            class="form-input"
-            required
-            placeholder="Choose a username"
-          />
+        <div class="text-center mt-10">
+          <p class="text-sm">
+            Already registered?
+            <router-link to="/login" style="color: var(--primary-600); text-decoration: none; font-weight: 800;">
+              Access Account
+            </router-link>
+          </p>
         </div>
-        
-        <div class="form-group">
-          <label class="form-label">Email</label>
-          <input
-            v-model="email"
-            type="email"
-            class="form-input"
-            required
-            placeholder="your@email.com"
-          />
-        </div>
-        
-        <div class="form-group">
-          <label class="form-label">Password</label>
-          <input
-            v-model="password"
-            type="password"
-            class="form-input"
-            required
-            placeholder="At least 8 characters"
-          />
-        </div>
-        
-        <div class="form-group">
-          <label class="form-label">Confirm Password</label>
-          <input
-            v-model="confirmPassword"
-            type="password"
-            class="form-input"
-            required
-            placeholder="Confirm your password"
-          />
-        </div>
-        
-        <button
-          type="submit"
-          class="btn btn-primary"
-          style="width: 100%; margin-top: 1rem;"
-          :disabled="loading"
-        >
-          {{ loading ? 'Creating Account...' : 'Register' }}
-        </button>
-      </form>
-      
-      <div style="margin-top: 1.5rem; text-align: center; color: #6b7280;">
-        Already have an account?
-        <router-link to="/login" style="color: #4f46e5; text-decoration: none;">
-          Sign in
-        </router-link>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.fade-enter-active, .fade-leave-active { transition: opacity 0.3s ease; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
+</style>

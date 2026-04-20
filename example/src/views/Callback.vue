@@ -23,7 +23,6 @@ onMounted(async () => {
   const nonce = route.query.state as string
   const errorParam = route.query.error as string
 
-  // Check for OAuth errors
   if (errorParam) {
     error.value = (route.query.error_description as string) || errorParam
     loading.value = false
@@ -31,7 +30,7 @@ onMounted(async () => {
   }
 
   if (!nonce) {
-    error.value = 'Missing state parameter'
+    error.value = 'Identity protocol failure: Missing state packet.'
     loading.value = false
     return
   }
@@ -41,74 +40,114 @@ onMounted(async () => {
   sessionStorage.removeItem(storageKey)
 
   if (!saved) {
-    error.value = 'Invalid or expired state parameter.'
+    error.value = 'Session expired or invalid state synchronization.'
     loading.value = false
     return
   }
 
-  let record: { nonce: string; return_to?: string; iat: number } | null = null
+  let record: { nonce: string; return_to?: string; verifier?: string; iat: number } | null = null
   try {
     record = JSON.parse(saved)
   } catch {
-    error.value = 'Invalid or expired state parameter.'
+    error.value = 'Checksum failure: Data corruption in state packet.'
     loading.value = false
     return
   }
 
   const ttlMs = 10 * 60 * 1000
   if (!record || record.nonce !== nonce || Date.now() - record.iat > ttlMs) {
-    error.value = 'Invalid or expired state parameter.'
+    error.value = 'Token TTL expired or nonce mismatch.'
     loading.value = false
     return
   }
 
-  // Exchange code for token
   if (!code) {
-    error.value = 'No authorization code received'
+    error.value = 'Missing authorization grant (code_not_found).'
     loading.value = false
     return
   }
 
   try {
-    // OAuth2 client configuration
     const clientId = 'default-client'
     const clientSecret = 'secret123'
     const redirectUri = 'http://localhost:3000/callback'
 
-    await authStore.exchangeCodeForToken(code, clientId, clientSecret, redirectUri)
+    await authStore.exchangeCodeForToken(code, clientId, clientSecret, redirectUri, record.verifier)
 
     router.replace(safeReturnTo(record.return_to))
   } catch (err: any) {
     console.error('OAuth callback error:', err)
-    error.value = err.message || 'Failed to exchange authorization code'
+    error.value = err.message || 'Back-channel exchange failed.'
     loading.value = false
   }
 })
 </script>
 
 <template>
-  <div style="max-width: 500px; margin: 3rem auto;">
-    <div class="card" style="text-align: center;">
-      <div v-if="loading" class="loading">
-        <div class="spinner"></div>
-      </div>
-      
-      <template v-else>
-        <div v-if="error" class="error-message" style="font-size: 1rem;">
-          <svg style="width: 48px; height: 48px; margin-bottom: 1rem;" fill="none" stroke="#dc2626" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-          </svg>
-          <p style="color: #dc2626;">{{ error }}</p>
+  <div class="auth-page-background">
+    <div class="auth-container">
+      <div class="premium-card glass-v2 text-center" style="padding: var(--space-12) var(--space-8);">
+        <div v-if="loading" class="verification-state">
+          <div class="spinner mb-8" style="width: 48px; height: 48px; border-width: 4px;"></div>
+          <h2 class="mb-4">Identity Handshake</h2>
+          <p class="text-sm text-muted">Exchanging authorization grants and validating PKCE signatures...</p>
+          <div class="loading-state-inline mt-10">
+            <span class="text-xs font-bold text-muted uppercase tracking-widest">Negotiating Security Protocol</span>
+          </div>
         </div>
         
-        <button @click="router.push('/')" class="btn btn-primary" style="margin-top: 1.5rem;">
-          Back to Home
-        </button>
-      </template>
-      
-      <div v-if="loading">
-        <p style="color: #6b7280; margin-top: 1rem;">Processing OAuth callback...</p>
+        <transition name="scale">
+          <div v-else-if="error" class="verification-state">
+            <div class="status-icon error mb-8">
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+            <h3 class="mb-4" style="color: var(--error);">Exchange Failed</h3>
+            <p class="text-sm text-muted mb-10" style="max-width: 320px; margin-inline: auto;">{{ error }}</p>
+            <router-link to="/" class="btn btn-primary" style="width: 100%;">
+              Back to Home Base
+            </router-link>
+          </div>
+        </transition>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.verification-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.status-icon {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--error);
+  box-shadow: 0 0 30px rgba(239, 68, 68, 0.2);
+}
+
+.status-icon svg { width: 40px; height: 40px; }
+
+.loading-state-inline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  justify-content: center;
+}
+
+.scale-enter-active { transition: all 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.scale-enter-from { opacity: 0; transform: scale(0.8); }
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+</style>

@@ -72,187 +72,400 @@ const techStack = [
 </script>
 
 <template>
-  <div>
+  <div class="about-page">
     <!-- Hero Section -->
-    <div class="card" style="text-align: center; margin-bottom: 2rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
-      <h1 style="font-size: 2.5rem; font-weight: 700; margin-bottom: 1rem;">
-        IDP Center
-      </h1>
-      <p style="font-size: 1.25rem; opacity: 0.95; margin-bottom: 1.5rem;">
-        企业级身份认证与授权中心
-      </p>
-      <p style="font-size: 1rem; opacity: 0.9; max-width: 600px; margin: 0 auto;">
-        一个现代化的身份提供商 (IdP) 解决方案，为您的应用提供安全、可靠、易用的认证服务
-      </p>
-    </div>
+    <section class="hero-container">
+      <div class="hero-mesh"></div>
+      <div class="hero-content">
+        <div class="hero-badge mb-6">
+          <span class="badge-dot"></span>
+          Next-Gen Identity Hub
+        </div>
+        <h1 class="hero-title mb-6">Unifying Identity <br/><span class="text-gradient">Without Compromise</span></h1>
+        <p class="hero-subtitle mb-8">
+          A secure, modular, and developer-first identity provider architecture designed to protect your digital ecosystem with military-grade precision.
+        </p>
+        <div class="hero-actions">
+          <router-link to="/register" class="btn btn-primary btn-glow-hero">
+            Start Securing Today
+          </router-link>
+          <router-link to="/" class="btn glass-btn-hero">
+            View Live Demo
+          </router-link>
+        </div>
+      </div>
+    </section>
 
     <!-- Core Features -->
-    <div class="card" style="margin-bottom: 2rem;">
-      <h2 style="font-size: 1.75rem; font-weight: 700; margin-bottom: 2rem; text-align: center;">
-        核心功能
-      </h2>
+    <section class="features-section">
+      <div class="text-center mb-12">
+        <div class="section-badge mb-4">Core Capabilities</div>
+        <h2 style="font-size: 2.5rem; color: var(--slate-900);">Engineered for Impact</h2>
+      </div>
       
       <div class="grid grid-3">
         <div 
           v-for="feature in features" 
           :key="feature.title"
-          style="padding: 1.5rem; border: 1px solid #e5e7eb; border-radius: 0.75rem; transition: all 0.2s;"
-          class="feature-card"
+          class="premium-card feature-tile"
         >
-          <div style="font-size: 2.5rem; margin-bottom: 1rem;">{{ feature.icon }}</div>
-          <h3 style="font-size: 1.125rem; font-weight: 600; color: #1f2937; margin-bottom: 0.75rem;">
-            {{ feature.title }}
-          </h3>
-          <p style="color: #6b7280; font-size: 0.875rem; line-height: 1.6; margin-bottom: 1rem;">
+          <div class="tile-icon mb-6">{{ feature.icon }}</div>
+          <h4 class="mb-3" style="font-size: 1.25rem;">{{ feature.title }}</h4>
+          <p class="text-sm text-muted mb-6" style="line-height: 1.7; color: var(--slate-500);">
             {{ feature.description }}
           </p>
-          <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+          <div class="tile-tags">
             <span 
               v-for="highlight in feature.highlights" 
               :key="highlight"
-              style="font-size: 0.75rem; padding: 0.25rem 0.75rem; background: #eff6ff; color: #1e40af; border-radius: 1rem;"
+              class="tag-pill"
             >
               {{ highlight }}
             </span>
           </div>
         </div>
       </div>
-    </div>
+    </section>
 
-    <!-- Use Cases -->
-    <div class="card" style="margin-bottom: 2rem;">
-      <h2 style="font-size: 1.75rem; font-weight: 700; margin-bottom: 2rem; text-align: center;">
-        应用场景
-      </h2>
-      
-      <div class="grid grid-2">
-        <div 
-          v-for="useCase in useCases" 
-          :key="useCase.title"
-          style="padding: 1.5rem; background: #f9fafb; border-radius: 0.75rem;"
-        >
-          <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem;">
-            <span style="font-size: 2rem;">{{ useCase.icon }}</span>
-            <h3 style="font-size: 1.25rem; font-weight: 600; color: #1f2937;">
-              {{ useCase.title }}
-            </h3>
+    <!-- Use Cases & Tech Stack -->
+    <section class="grid grid-2" style="gap: var(--space-8); align-items: stretch;">
+      <div class="premium-card glass-v2">
+        <div class="card-header-icon mb-6">🚀</div>
+        <h3 class="mb-8" style="font-size: 1.75rem;">Application Scenarios</h3>
+        <div class="use-case-list">
+          <div 
+            v-for="useCase in useCases" 
+            :key="useCase.title"
+            class="use-case-item"
+          >
+            <div class="use-case-icon">{{ useCase.icon }}</div>
+            <div class="use-case-text">
+              <h4 class="mb-1" style="font-size: 1rem; font-weight: 700;">{{ useCase.title }}</h4>
+              <p class="text-xs text-muted" style="margin-bottom: 0; color: var(--slate-500);">{{ useCase.description }}</p>
+            </div>
           </div>
-          <p style="color: #6b7280; font-size: 0.9rem; line-height: 1.6;">
-            {{ useCase.description }}
+        </div>
+      </div>
+
+      <div class="premium-card glass-v2 tech-stack-container">
+        <div class="card-header-icon mb-6">🛠️</div>
+        <h3 class="mb-8" style="font-size: 1.75rem;">Technology Stack</h3>
+        <div class="tech-grid">
+          <div 
+            v-for="tech in techStack" 
+            :key="tech.name"
+            class="tech-item"
+          >
+            <div class="tech-name">{{ tech.name }}</div>
+            <div class="tech-desc">{{ tech.description }}</div>
+          </div>
+        </div>
+
+        <div class="security-banner mt-12">
+          <div class="banner-glow"></div>
+          <h4 style="color: white; font-size: 1.125rem;" class="mb-2">Security-First</h4>
+          <p class="text-xs" style="color: var(--primary-100); opacity: 0.8; margin-bottom: 0; line-height: 1.5;">
+            Built with defense-in-depth principles: zero-trust verification and PKCE-secured flows.
           </p>
         </div>
       </div>
-    </div>
+    </section>
 
-    <!-- Security Features -->
-    <div class="card" style="margin-bottom: 2rem;">
-      <h2 style="font-size: 1.75rem; font-weight: 700; margin-bottom: 2rem; text-align: center;">
-        安全特性
-      </h2>
-      
-      <div style="display: grid; gap: 1rem;">
-        <div style="padding: 1.25rem; background: #fef3c7; border-left: 4px solid #f59e0b; border-radius: 0.5rem;">
-          <h4 style="font-weight: 600; color: #92400e; margin-bottom: 0.5rem;">密码安全</h4>
-          <ul style="color: #78350f; font-size: 0.875rem; margin-left: 1.5rem; line-height: 1.8;">
-            <li>使用 bcrypt 进行密码哈希存储</li>
-            <li>密码强度验证（最少8位，包含大小写字母、数字、特殊字符）</li>
-            <li>密码重置功能支持</li>
-            <li>密码过期提醒</li>
-          </ul>
-        </div>
-        
-        <div style="padding: 1.25rem; background: #dbeafe; border-left: 4px solid #3b82f6; border-radius: 0.5rem;">
-          <h4 style="font-weight: 600; color: #1e40af; margin-bottom: 0.5rem;">会话管理</h4>
-          <ul style="color: #1e3a8a; font-size: 0.875rem; margin-left: 1.5rem; line-height: 1.8;">
-            <li>JWT Token 有效期控制（默认24小时）</li>
-            <li>Refresh Token 机制（7天有效期）</li>
-            <li>多设备会话管理</li>
-            <li>远程会话撤销</li>
-          </ul>
-        </div>
-        
-        <div style="padding: 1.25rem; background: #dcfce7; border-left: 4px solid #22c55e; border-radius: 0.5rem;">
-          <h4 style="font-weight: 600; color: #166534; margin-bottom: 0.5rem;">访问控制</h4>
-          <ul style="color: #14532d; font-size: 0.875rem; margin-left: 1.5rem; line-height: 1.8;">
-            <li>基于角色的访问控制 (RBAC)</li>
-            <li>管理员和普通用户权限分离</li>
-            <li>租户级别数据隔离</li>
-            <li>OAuth2 授权范围控制</li>
-          </ul>
-        </div>
-        
-        <div style="padding: 1.25rem; background: #fce7f3; border-left: 4px solid #ec4899; border-radius: 0.5rem;">
-          <h4 style="font-weight: 600; color: #9d174d; margin-bottom: 0.5rem;">审计追踪</h4>
-          <ul style="color: #831843; font-size: 0.875rem; margin-left: 1.5rem; line-height: 1.8;">
-            <li>完整的登录日志记录</li>
-            <li>用户操作行为追踪</li>
-            <li>IP 地址和设备信息记录</li>
-            <li>异常登录检测</li>
-          </ul>
+    <!-- Final Call to Action -->
+    <section class="footer-cta-container">
+      <div class="cta-mesh"></div>
+      <div class="cta-content">
+        <h2 class="cta-title mb-4">Ready to Secure Your Future?</h2>
+        <p class="cta-subtitle mb-8">
+          Join a global community of developers. IDP Center is enterprise-ready.
+        </p>
+        <div class="cta-btns">
+          <router-link to="/register" class="btn btn-primary btn-glow-active">
+            Get Started Now &rarr;
+          </router-link>
+          <router-link to="/login" class="btn glass-btn-dark">
+            Member Access
+          </router-link>
         </div>
       </div>
-    </div>
-
-    <!-- Technology Stack -->
-    <div class="card" style="margin-bottom: 2rem;">
-      <h2 style="font-size: 1.75rem; font-weight: 700; margin-bottom: 2rem; text-align: center;">
-        技术栈
-      </h2>
-      
-      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem;">
-        <div 
-          v-for="tech in techStack" 
-          :key="tech.name"
-          style="text-align: center; padding: 1rem; background: #f9fafb; border-radius: 0.5rem;"
-        >
-          <h4 style="font-weight: 600; color: #1f2937; margin-bottom: 0.25rem;">{{ tech.name }}</h4>
-          <p style="font-size: 0.75rem; color: #6b7280;">{{ tech.description }}</p>
-        </div>
-      </div>
-    </div>
-
-    <!-- Getting Started -->
-    <div class="card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white;">
-      <h2 style="font-size: 1.75rem; font-weight: 700; margin-bottom: 1rem;">
-        快速开始
-      </h2>
-      <p style="margin-bottom: 1.5rem; opacity: 0.95;">
-        只需几分钟即可将 IDP Center 集成到您的应用中：
-      </p>
-      <div style="display: grid; gap: 1rem;">
-        <div style="display: flex; align-items: center; gap: 1rem;">
-          <span style="width: 32px; height: 32px; background: white; color: #f5576c; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 600;">1</span>
-          <span>注册 OAuth 客户端应用</span>
-        </div>
-        <div style="display: flex; align-items: center; gap: 1rem;">
-          <span style="width: 32px; height: 32px; background: white; color: #f5576c; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 600;">2</span>
-          <span>配置回调 URL</span>
-        </div>
-        <div style="display: flex; align-items: center; gap: 1rem;">
-          <span style="width: 32px; height: 32px; background: white; color: #f5576c; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 600;">3</span>
-          <span>在您的应用中集成认证流程</span>
-        </div>
-        <div style="display: flex; align-items: center; gap: 1rem;">
-          <span style="width: 32px; height: 32px; background: white; color: #f5576c; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 600;">4</span>
-          <span>用户即可享受安全的单点登录体验</span>
-        </div>
-      </div>
-      <div style="margin-top: 2rem;">
-        <router-link 
-          to="/" 
-          class="btn" 
-          style="background: white; color: #f5576c; text-decoration: none; display: inline-block;"
-        >
-          立即体验 →
-        </router-link>
-      </div>
-    </div>
+    </section>
   </div>
 </template>
 
 <style scoped>
-.feature-card:hover {
+.about-page {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 80px; 
+  padding: 0 var(--space-6) 80px; /* Added horizontal padding */
+}
+
+/* --- Hero Section --- */
+.hero-container {
+  position: relative;
+  border-radius: var(--radius-2xl);
+  overflow: hidden;
+  padding: var(--space-12) var(--space-8); /* Adjusted hero padding */
+  min-height: 540px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  background-color: #020617;
+  box-shadow: var(--shadow-2xl);
+}
+
+.hero-mesh {
+  position: absolute;
+  inset: 0;
+  background-image: 
+    radial-gradient(at 0% 0%, hsla(253,16%,7%,1) 0, transparent 50%), 
+    radial-gradient(at 50% 0%, hsla(225,39%,30%,1) 0, transparent 50%), 
+    radial-gradient(at 100% 0%, hsla(339,49%,30%,1) 0, transparent 50%), 
+    radial-gradient(at 0% 100%, hsla(339,49%,30%,1) 0, transparent 50%), 
+    radial-gradient(at 50% 100%, hsla(225,39%,30%,1) 0, transparent 50%), 
+    radial-gradient(at 100% 100%, hsla(253,16%,7%,1) 0, transparent 50%);
+  filter: blur(80px);
+  opacity: 0.6;
+  animation: mesh-float 30s ease-in-out infinite alternate;
+}
+
+@keyframes mesh-float {
+  0% { transform: scale(1) translate(0, 0); }
+  100% { transform: scale(1.2) translate(5%, 5%); }
+}
+
+.hero-content { position: relative; z-index: 10; max-width: 850px; }
+
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0.6rem 1.5rem;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  color: var(--primary-200);
+  font-size: 0.875rem;
+  font-weight: 600;
+  backdrop-filter: blur(12px);
+  box-shadow: inset 0 0 20px rgba(255, 255, 255, 0.05);
+}
+
+.badge-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--primary-500);
+  box-shadow: 0 0 15px var(--primary-500);
+  animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse-ring {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.2); }
+}
+
+.hero-title {
+  font-size: clamp(3rem, 10vw, 4.5rem);
+  line-height: 1;
+  font-weight: 900;
+  letter-spacing: -0.04em;
+  color: white;
+}
+
+.text-gradient {
+  background: linear-gradient(135deg, #a5b4fc 0%, #fbcfe8 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.hero-subtitle {
+  font-size: 1.25rem;
+  color: var(--slate-400);
+  max-width: 650px;
+  margin: 0 auto var(--space-10);
+  line-height: 1.6;
+}
+
+.hero-actions { display: flex; gap: var(--space-4); justify-content: center; }
+
+.btn-glow-hero {
+  background-color: var(--primary-600);
+  color: white;
+  box-shadow: 0 0 30px rgba(79, 70, 229, 0.3);
+}
+
+.glass-btn-hero {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: white;
+  backdrop-filter: blur(10px);
+}
+
+/* --- Premium Cards & Features --- */
+.premium-card {
+  background: white;
+  border: 1px solid var(--slate-100);
+  border-radius: var(--radius-2xl);
+  padding: var(--space-8); /* Use a valid token */
+  box-shadow: var(--shadow-xl);
+  transition: all 0.4s cubic-bezier(0.23, 1, 0.32, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.glass-v2 {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(20px);
+}
+
+.section-badge {
+  display: inline-block;
+  padding: 0.4rem 1rem;
+  background: var(--primary-50);
+  color: var(--primary-700);
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.feature-tile:hover {
+  transform: translateY(-12px);
+  border-color: var(--primary-200);
+  box-shadow: 0 30px 60px -12px rgba(15, 23, 42, 0.12);
+}
+
+.tile-icon {
+  font-size: 3rem;
+  background: var(--slate-50);
+  width: 72px;
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-xl);
+}
+
+.tile-tags { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.tag-pill {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.3rem 0.8rem;
+  background: var(--slate-50);
+  color: var(--slate-600);
+  border-radius: 999px;
+  border: 1px solid var(--slate-100);
+}
+
+/* --- Use Cases & Tech --- */
+.card-header-icon {
+  font-size: 2.5rem;
+  opacity: 0.9;
+}
+
+.use-case-list { display: grid; gap: var(--space-4); }
+.use-case-item {
+  padding: var(--space-5);
+  background: white;
+  border: 1px solid var(--slate-100);
+  border-radius: var(--radius-xl);
+  display: flex;
+  gap: var(--space-5);
+  align-items: center;
+  transition: all 0.3s ease;
+}
+
+.use-case-item:hover {
+  background: var(--slate-50);
+  transform: translateX(8px);
+}
+
+.use-case-icon { font-size: 1.75rem; flex-shrink: 0; }
+
+.tech-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--space-3); }
+.tech-item {
+  padding: var(--space-4);
+  background: white;
+  border: 1px solid var(--slate-200);
+  border-radius: var(--radius-xl);
+  text-align: center;
+}
+
+.tech-name { font-weight: 800; color: var(--slate-900); font-size: 0.9rem; }
+.tech-desc { font-size: 0.75rem; color: var(--slate-500); margin-top: 0.2rem; }
+
+.security-banner {
+  padding: var(--space-8);
+  background: #0f172a;
+  border-radius: var(--radius-xl);
+  color: white;
+  position: relative;
+  overflow: hidden;
+}
+
+.banner-glow {
+  position: absolute;
+  top: -50%;
+  right: -20%;
+  width: 150px;
+  height: 150px;
+  background: var(--primary-500);
+  filter: blur(60px);
+  opacity: 0.3;
+}
+
+/* --- Footer CTA --- */
+.footer-cta-container {
+  position: relative;
+  border-radius: var(--radius-2xl);
+  overflow: hidden;
+  padding: var(--space-20) var(--space-8);
+  text-align: center;
+  background: #0f172a;
+  color: white;
+}
+
+.cta-mesh {
+  position: absolute;
+  inset: 0;
+  background: 
+    radial-gradient(circle at 0% 0%, #4338ca 0%, transparent 40%),
+    radial-gradient(circle at 100% 100%, #be185d 0%, transparent 40%);
+  opacity: 0.4;
+}
+
+.cta-title { font-size: 3rem; font-weight: 900; color: white; position: relative; z-index: 10; }
+.cta-subtitle { font-size: 1.25rem; opacity: 0.7; position: relative; z-index: 10; }
+.cta-btns { display: flex; gap: var(--space-4); justify-content: center; position: relative; z-index: 10; }
+
+.btn-glow-active {
+  background: white;
+  color: #0f172a;
+  box-shadow: 0 0 40px rgba(255, 255, 255, 0.2);
+}
+
+.btn-glow-active:hover {
   transform: translateY(-4px);
-  box-shadow: 0 12px 24px -8px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 0 60px rgba(255, 255, 255, 0.3);
+}
+
+.glass-btn-dark {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: white;
+  backdrop-filter: blur(10px);
+}
+
+@media (max-width: 768px) {
+  .hero-container { padding: var(--space-16) var(--space-6); min-height: auto; }
+  .hero-title { font-size: 2.75rem; }
+  .tech-grid { grid-template-columns: 1fr; }
+  .cta-btns { flex-direction: column; }
+  .cta-title { font-size: 2.25rem; }
 }
 </style>

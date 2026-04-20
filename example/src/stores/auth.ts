@@ -6,6 +6,9 @@ interface User {
   id: string
   username: string
   email: string
+  full_name?: string
+  phone?: string
+  avatar_url?: string
   is_admin?: boolean
   otp_enabled?: boolean
   tenant_id?: string
@@ -256,7 +259,8 @@ export const useAuthStore = defineStore('auth', () => {
     code: string,
     clientId: string,
     clientSecret: string,
-    redirectUri: string
+    redirectUri: string,
+    codeVerifier?: string
   ): Promise<TokenData> {
     loading.value = true
     error.value = null
@@ -266,14 +270,20 @@ export const useAuthStore = defineStore('auth', () => {
       console.log('Code:', code)
       console.log('Client ID:', clientId)
       console.log('Redirect URI:', redirectUri)
+      if (codeVerifier) console.log('Code Verifier provided')
 
-      const response = await http.post('/oidc/token', {
+      const payload: Record<string, any> = {
         grant_type: 'authorization_code',
         code,
         client_id: clientId,
         client_secret: clientSecret,
         redirect_uri: redirectUri
-      })
+      }
+      if (codeVerifier) {
+        payload.code_verifier = codeVerifier
+      }
+
+      const response = await http.post('/oidc/token', payload)
 
       const data = response.data
       console.log('Token exchange response:', data)
@@ -334,6 +344,114 @@ export const useAuthStore = defineStore('auth', () => {
     return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('')
   }
 
+  // --- Advanced Flows ---
+
+  // OTP Configuration
+  async function setupOTP() {
+    try {
+      const response = await http.post('/auth/otp/setup')
+      return response.data.data ?? response.data
+    } catch (err: any) {
+      console.error('Failed to setup OTP:', err)
+      throw err
+    }
+  }
+
+  async function verifyOTP(tokenStr: string) {
+    try {
+      const response = await http.post('/auth/otp/verify', { token: tokenStr })
+      if (user.value) {
+        user.value.otp_enabled = true
+      }
+      return response.data.data ?? response.data
+    } catch (err: any) {
+      console.error('Failed to verify OTP:', err)
+      throw err
+    }
+  }
+
+  // Trusted Devices
+  async function getTrustedDevices() {
+    try {
+      const response = await http.get('/user/trusted-devices')
+      return response.data.data ?? response.data
+    } catch (err: any) {
+      console.error('Failed to get trusted devices:', err)
+      throw err
+    }
+  }
+
+  async function revokeTrustedDevice(deviceId: string) {
+    try {
+      await http.delete(`/user/trusted-devices/${deviceId}`)
+    } catch (err: any) {
+      console.error('Failed to revoke trusted device:', err)
+      throw err
+    }
+  }
+
+  // Password Reset
+  async function requestPasswordReset(email: string) {
+    try {
+      const response = await http.post('/auth/password/reset-request', { email })
+      return response.data.data ?? response.data
+    } catch (err: any) {
+      console.error('Request password reset error:', err)
+      throw err
+    }
+  }
+
+  async function verifyPasswordResetToken(tokenStr: string) {
+    try {
+      const response = await http.post('/auth/password/reset-verify', { token: tokenStr })
+      return response.data.data ?? response.data
+    } catch (err: any) {
+      console.error('Verify password reset token error:', err)
+      throw err
+    }
+  }
+
+  async function resetPassword(tokenStr: string, newPassword: string) {
+    try {
+      const response = await http.post('/auth/password/reset', { token: tokenStr, new_password: newPassword })
+      return response.data.data ?? response.data
+    } catch (err: any) {
+      console.error('Reset password error:', err)
+      throw err
+    }
+  }
+
+  // Email Verification
+  async function verifyEmail(tokenStr: string) {
+    try {
+      const response = await http.post('/auth/email/verify', { token: tokenStr })
+      return response.data.data ?? response.data
+    } catch (err: any) {
+      console.error('Verify email error:', err)
+      throw err
+    }
+  }
+
+  async function resendVerificationEmail(email?: string, username?: string) {
+    try {
+      if (token.value) {
+        // Authenticated flow
+        const response = await http.post('/auth/email/resend')
+        return response.data.data ?? response.data
+      } else {
+        // Public flow
+        const payload: any = {}
+        if (email) payload.email = email
+        if (username) payload.username = username
+        const response = await http.post('/auth/email/resend-public', payload)
+        return response.data.data ?? response.data
+      }
+    } catch (err: any) {
+      console.error('Resend verification email error:', err)
+      throw err
+    }
+  }
+
   return {
     user,
     token,
@@ -350,6 +468,15 @@ export const useAuthStore = defineStore('auth', () => {
     revokeSession,
     startOAuthFlow,
     exchangeCodeForToken,
-    fetchUserInfo
+    fetchUserInfo,
+    setupOTP,
+    verifyOTP,
+    getTrustedDevices,
+    revokeTrustedDevice,
+    requestPasswordReset,
+    verifyPasswordResetToken,
+    resetPassword,
+    verifyEmail,
+    resendVerificationEmail
   }
 })
