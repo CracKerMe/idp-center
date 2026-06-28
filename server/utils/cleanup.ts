@@ -1,4 +1,6 @@
 import { db } from '../database.js';
+import { accessTokens, refreshTokens, authCodes, oauthStates, passwordResets, trustedDevices } from '../schema.js';
+import { and, eq, lt } from 'drizzle-orm';
 
 export interface CleanupResult {
   accessTokens: number;
@@ -9,14 +11,22 @@ export interface CleanupResult {
   trustedDevices: number;
 }
 
-export function cleanupExpiredTokens(): CleanupResult {
-  const now = new Date().toISOString();
+export async function cleanupExpiredTokens(): Promise<CleanupResult> {
+  const now = new Date();
+
+  const atResult = await db.delete(accessTokens).where(lt(accessTokens.expiresAt, now));
+  const rtResult = await db.delete(refreshTokens).where(and(lt(refreshTokens.expiresAt, now), eq(refreshTokens.revoked, true)));
+  const acResult = await db.delete(authCodes).where(lt(authCodes.expiresAt, now));
+  const osResult = await db.delete(oauthStates).where(lt(oauthStates.expiresAt, now));
+  const prResult = await db.delete(passwordResets).where(and(lt(passwordResets.expiresAt, now), eq(passwordResets.used, true)));
+  const tdResult = await db.delete(trustedDevices).where(lt(trustedDevices.expiresAt, now));
+
   return {
-    accessTokens: db.prepare('DELETE FROM access_tokens WHERE expires_at < ?').run(now).changes,
-    refreshTokens: db.prepare('DELETE FROM refresh_tokens WHERE expires_at < ? AND revoked = 1').run(now).changes,
-    authCodes: db.prepare('DELETE FROM auth_codes WHERE expires_at < ?').run(now).changes,
-    oauthStates: db.prepare('DELETE FROM oauth_states WHERE expires_at < ?').run(now).changes,
-    passwordResets: db.prepare('DELETE FROM password_resets WHERE expires_at < ? AND used = 1').run(now).changes,
-    trustedDevices: db.prepare('DELETE FROM trusted_devices WHERE expires_at < ?').run(now).changes,
+    accessTokens: Number((atResult as any).rowCount),
+    refreshTokens: Number((rtResult as any).rowCount),
+    authCodes: Number((acResult as any).rowCount),
+    oauthStates: Number((osResult as any).rowCount),
+    passwordResets: Number((prResult as any).rowCount),
+    trustedDevices: Number((tdResult as any).rowCount),
   };
 }

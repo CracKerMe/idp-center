@@ -2,20 +2,15 @@ import express from 'express';
 import { db } from '../database.js';
 import { error, ErrorCode } from '../utils/response.js';
 import { logAudit } from '../utils/audit.js';
+import { tenantIpWhitelist } from '../schema.js';
+import { eq } from 'drizzle-orm';
 
 // ─── IPv4 helpers ────────────────────────────────────────────────────────────
 
-/**
- * Convert a dotted-decimal IPv4 string to a 32-bit unsigned integer.
- */
 export function ipv4ToInt(ip: string): number {
   return ip.split('.').reduce((acc, octet) => (acc << 8) | parseInt(octet, 10), 0) >>> 0;
 }
 
-/**
- * Test whether an IPv4 address falls within a given IPv4 CIDR range.
- * Uses bitwise mask comparison.
- */
 export function isIpv4InCidr(ip: string, cidr: string): boolean {
   const [network, prefixStr] = cidr.split('/');
   const prefix = parseInt(prefixStr, 10);
@@ -27,12 +22,7 @@ export function isIpv4InCidr(ip: string, cidr: string): boolean {
 
 // ─── IPv6 helpers ────────────────────────────────────────────────────────────
 
-/**
- * Expand a shorthand IPv6 address to full 8-group notation.
- * Handles '::' compression and embedded IPv4 addresses.
- */
 export function expandIpv6(ip: string): string {
-  // Handle '::' — split into left and right halves
   if (ip.includes('::')) {
     const [left, right] = ip.split('::');
     const leftGroups = left ? left.split(':') : [];
@@ -42,23 +32,15 @@ export function expandIpv6(ip: string): string {
     const all = [...leftGroups, ...middle, ...rightGroups];
     return all.map(g => g.padStart(4, '0')).join(':');
   }
-  // Already fully expanded — just zero-pad each group
   return ip.split(':').map(g => g.padStart(4, '0')).join(':');
 }
 
-/**
- * Convert a fully-expanded IPv6 address (8 groups) to a BigInt.
- */
 export function ipv6ToBigInt(ip: string): bigint {
   return ip
     .split(':')
     .reduce((acc, group) => (acc << 16n) | BigInt(parseInt(group, 16)), 0n);
 }
 
-/**
- * Test whether an IPv6 address falls within a given IPv6 CIDR range.
- * Uses BigInt mask comparison.
- */
 export function isIpv6InCidr(ip: string, cidr: string): boolean {
   const [network, prefixStr] = cidr.split('/');
   const prefix = parseInt(prefixStr, 10);
@@ -70,7 +52,6 @@ export function isIpv6InCidr(ip: string, cidr: string): boolean {
 
 // ─── CIDR parsing ────────────────────────────────────────────────────────────
 
-/** Simple IPv4 format check */
 function isValidIpv4(ip: string): boolean {
   const parts = ip.split('.');
   if (parts.length !== 4) return false;
@@ -80,9 +61,7 @@ function isValidIpv4(ip: string): boolean {
   });
 }
 
-/** Simple IPv6 format check (accepts compressed notation) */
 function isValidIpv6(ip: string): boolean {
-  // Allow at most one '::'
   const doubleColonCount = (ip.match(/::/g) || []).length;
   if (doubleColonCount > 1) return false;
 
@@ -94,10 +73,6 @@ function isValidIpv6(ip: string): boolean {
   return allGroups.every(g => /^[0-9a-fA-F]{1,4}$/.test(g));
 }
 
-/**
- * Parse and validate a CIDR string.
- * Returns `{ ip, prefix, version }` on success, or `null` if the format is invalid.
- */
 export function parseCidr(cidr: string): { ip: string; prefix: number; version: 4 | 6 } | null {
   const parts = cidr.split('/');
   if (parts.length !== 2) return null;
@@ -118,11 +93,6 @@ export function parseCidr(cidr: string): { ip: string; prefix: number; version: 
 
 // ─── Unified IP-in-CIDR dispatcher ───────────────────────────────────────────
 
-/**
- * Test whether an IP address (IPv4 or IPv6) falls within a given CIDR range.
- * Dispatches to the appropriate IPv4 or IPv6 matcher based on the CIDR version.
- * Returns `false` if the CIDR is invalid or the IP/CIDR versions do not match.
- */
 export function isIpInCidr(ip: string, cidr: string): boolean {
   const parsed = parseCidr(cidr);
   if (!parsed) return false;
@@ -138,11 +108,6 @@ export function isIpInCidr(ip: string, cidr: string): boolean {
 
 // ─── Client IP extraction ─────────────────────────────────────────────────────
 
-/**
- * Extract the real client IP from a request.
- * Prefers the first entry in the `X-Forwarded-For` header (set by reverse proxies),
- * falling back to `req.ip` and then `req.socket.remoteAddress`.
- */
 export function extractClientIp(req: express.Request): string {
   const forwarded = req.headers['x-forwarded-for'];
   if (forwarded) {
@@ -156,54 +121,46 @@ export function extractClientIp(req: express.Request): string {
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 
-/**
- * IP whitelist guard middleware.
- *
- * Must be registered after `tenantContext` (which injects `req.tenantId`).
- *
- * Behaviour:
- * - If the tenant has no whitelist entries → call `next()` (allow all).
- * - If the client IP matches any CIDR entry (logical OR) → call `next()`.
- * - Otherwise → respond 403 `IP_NOT_WHITELISTED` and write an audit log entry.
- */
-export function ipWhitelistGuard(
+export async function ipWhitelistGuard(
   req: express.Request,
   res: express.Response,
   next: express.NextFunction
-): void {
-  const tenantId = req.tenantId;
+) {
+  try {
+    const tenantId = req.tenantId;
 
-  const entries = db
-    .prepare('SELECT cidr FROM tenant_ip_whitelist WHERE tenant_id = ?')
-    .all(tenantId) as { cidr: string }[];
+    const entries = await db
+      .select({ cidr: tenantIpWhitelist.cidr })
+      .from(tenantIpWhitelist)
+      .where(eq(tenantIpWhitelist.tenantId, tenantId));
 
-  // No whitelist configured → allow all traffic
-  if (entries.length === 0) {
-    next();
-    return;
+    if (entries.length === 0) {
+      next();
+      return;
+    }
+
+    const clientIp = extractClientIp(req);
+    const allowed = entries.some(entry => isIpInCidr(clientIp, entry.cidr));
+
+    if (allowed) {
+      next();
+      return;
+    }
+
+    await logAudit(
+      null,
+      'IP_BLOCKED',
+      req,
+      JSON.stringify({
+        blocked_ip: clientIp,
+        tenant_id: tenantId,
+        path: req.path,
+      }),
+      tenantId
+    );
+
+    res.status(403).json(error('Access denied: IP not whitelisted', ErrorCode.IP_NOT_WHITELISTED));
+  } catch (err) {
+    next(err);
   }
-
-  const clientIp = extractClientIp(req);
-
-  const allowed = entries.some(entry => isIpInCidr(clientIp, entry.cidr));
-
-  if (allowed) {
-    next();
-    return;
-  }
-
-  // Blocked — write audit log and return 403
-  logAudit(
-    null,
-    'IP_BLOCKED',
-    req,
-    JSON.stringify({
-      blocked_ip: clientIp,
-      tenant_id: tenantId,
-      path: req.path,
-    }),
-    tenantId
-  );
-
-  res.status(403).json(error('Access denied: IP not whitelisted', ErrorCode.IP_NOT_WHITELISTED));
 }

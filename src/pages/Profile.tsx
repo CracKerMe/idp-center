@@ -12,7 +12,7 @@ interface UserInfo {
   full_name?: string;
   phone?: string;
   avatar_url?: string;
-  otp_enabled: boolean;
+  otp_enabled: number;
   tenant_id?: string;
 }
 

@@ -1,55 +1,57 @@
-import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
-vi.hoisted(() => {
-  process.env.DB_PATH = 'auth_integration.test.db';
-});
+import { describe, it, expect, beforeEach, beforeAll, vi } from 'vitest';
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 60_000 });
 
-const DB_FILE = process.env.DB_PATH!;
+import { db, initDatabase } from '../../server/database.js';
+import { sql, eq } from 'drizzle-orm';
+import {
+  users,
+  emailVerifications,
+  refreshTokens,
+  sessions,
+  passwordResets,
+  accessTokens,
+  trustedDevices,
+  linkedAccounts,
+  accountDeletionRequests,
+  passwordHistory,
+} from '../../server/schema.js';
 
-import fs from 'fs';
-import request from 'supertest';
-import { app } from '../../server.js';
-import { db } from '../../server/database.js';
-
-// Mock email service to prevent actual emails
 vi.mock('../../server/services/email.service.js', () => ({
   emailService: {
     sendVerificationEmail: vi.fn().mockResolvedValue(true),
     sendPasswordResetEmail: vi.fn().mockResolvedValue(true),
     sendAccountDeletionConfirmEmail: vi.fn().mockResolvedValue(true),
-  }
+  },
 }));
 
-describe('Auth API Integration', () => {
+import { app } from '../../server.js';
+import request from 'supertest';
+
+const skipIfNoDb = !process.env.DATABASE_URL && !process.env.PG_HOST;
+
+describe.skipIf(skipIfNoDb)('Auth API Integration', () => {
   const testUser = {
     username: 'testuser',
     email: 'test@example.com',
     password: 'Password123!',
   };
 
-  afterAll(() => {
-    // Cleanup the test database file
-    if (fs.existsSync(DB_FILE)) {
-      fs.unlinkSync(DB_FILE);
-    }
+  beforeAll(async () => {
+    await initDatabase(); // push schema + seed defaults
   });
 
-  beforeEach(() => {
-    // Clean tables before each test to ensure isolation
-    const tables = [
-      'email_verifications',
-      'refresh_tokens',
-      'sessions',
-      'password_resets',
-      'access_tokens',
-      'trusted_devices',
-      'linked_accounts',
-      'account_deletion_requests',
-      'password_history',
-    ];
-    for (const table of tables) {
-      db.prepare(`DELETE FROM ${table}`).run();
-    }
-    db.prepare('DELETE FROM users WHERE username != ?').run('admin');
+  beforeEach(async () => {
+    // Clean test data in reverse dependency order
+    await db.delete(passwordHistory);
+    await db.delete(accountDeletionRequests);
+    await db.delete(linkedAccounts);
+    await db.delete(trustedDevices);
+    await db.delete(accessTokens);
+    await db.delete(passwordResets);
+    await db.delete(sessions);
+    await db.delete(refreshTokens);
+    await db.delete(emailVerifications);
+    await db.delete(users).where(eq(users.username, 'testuser'));
   });
 
   describe('POST /api/auth/register', () => {
@@ -61,17 +63,15 @@ describe('Auth API Integration', () => {
       expect(response.status).toBe(200);
       expect(response.body).toHaveProperty('message', 'User registered successfully');
 
-      const user = db.prepare('SELECT * FROM users WHERE username = ?').get(testUser.username) as any;
+      const [user] = await db.select().from(users).where(eq(users.username, testUser.username)).limit(1);
       expect(user).toBeTruthy();
       expect(user.email).toBe(testUser.email);
-      expect(user.email_verified).toBe(0);
+      expect(user.emailVerified).toBe(false);
     });
 
     it('returns error if email already exists', async () => {
-      // Register once
       await request(app).post('/api/auth/register').send(testUser);
-      
-      // Register again
+
       const response = await request(app)
         .post('/api/auth/register')
         .send(testUser);
@@ -86,7 +86,7 @@ describe('Auth API Integration', () => {
         .send({
           username: 'badpass',
           email: 'bad@example.com',
-          password: 'passwordvlow', // Passes Zod (min 8) but fails route handler (complexity)
+          password: 'passwordvlow',
         });
 
       expect(response.status).toBe(400);
@@ -96,18 +96,14 @@ describe('Auth API Integration', () => {
 
   describe('POST /api/auth/login', () => {
     beforeEach(async () => {
-      // Create a verified user for login tests
       await request(app).post('/api/auth/register').send(testUser);
-      db.prepare('UPDATE users SET email_verified = 1 WHERE username = ?').run(testUser.username);
+      await db.update(users).set({ emailVerified: true }).where(eq(users.username, testUser.username));
     });
 
     it('successfully logs in with valid credentials', async () => {
       const response = await request(app)
         .post('/api/auth/login')
-        .send({
-          username: testUser.username,
-          password: testUser.password,
-        });
+        .send({ username: testUser.username, password: testUser.password });
 
       expect(response.status).toBe(200);
       expect(response.body.data).toHaveProperty('access_token');
@@ -118,24 +114,18 @@ describe('Auth API Integration', () => {
     it('returns error for invalid password', async () => {
       const response = await request(app)
         .post('/api/auth/login')
-        .send({
-          username: testUser.username,
-          password: 'WrongPassword!',
-        });
+        .send({ username: testUser.username, password: 'WrongPassword!' });
 
       expect(response.status).toBe(401);
       expect(response.body).toHaveProperty('error', 'Invalid credentials');
     });
 
     it('refuses login for unverified users', async () => {
-      db.prepare('UPDATE users SET email_verified = 0 WHERE username = ?').run(testUser.username);
-      
+      await db.update(users).set({ emailVerified: false }).where(eq(users.username, testUser.username));
+
       const response = await request(app)
         .post('/api/auth/login')
-        .send({
-          username: testUser.username,
-          password: testUser.password,
-        });
+        .send({ username: testUser.username, password: testUser.password });
 
       expect(response.status).toBe(403);
       expect(response.body).toHaveProperty('error', 'Email not verified');
@@ -144,23 +134,20 @@ describe('Auth API Integration', () => {
 
   describe('POST /api/auth/refresh', () => {
     it('successfully refreshes token', async () => {
-      // Setup: register, verify and login to get refresh token
       await request(app).post('/api/auth/register').send(testUser);
-      db.prepare('UPDATE users SET email_verified = 1 WHERE username = ?').run(testUser.username);
-      
+      await db.update(users).set({ emailVerified: true }).where(eq(users.username, testUser.username));
+
       const loginRes = await request(app).post('/api/auth/login').send({
         username: testUser.username,
         password: testUser.password,
       });
-      
+
       const oldRefreshToken = loginRes.body.data.refresh_token;
 
-      // Act
       const response = await request(app)
         .post('/api/auth/refresh')
         .send({ refresh_token: oldRefreshToken });
 
-      // Assert
       expect(response.status).toBe(200);
       expect(response.body.data).toHaveProperty('access_token');
       expect(response.body.data).toHaveProperty('refresh_token');

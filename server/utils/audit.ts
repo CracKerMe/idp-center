@@ -2,8 +2,9 @@ import crypto from 'crypto';
 import express from 'express';
 import { db } from '../database.js';
 import { logger } from './logger.js';
+import { auditLogs } from '../schema.js';
 
-export function logAudit(
+export async function logAudit(
   userId: string | null,
   action: string,
   req: express.Request,
@@ -14,9 +15,15 @@ export function logAudit(
   const ip = req.ip || req.connection.remoteAddress || 'unknown';
 
   try {
-    db.prepare(
-      'INSERT INTO audit_logs (id, user_id, tenant_id, action, ip_address, user_agent, details) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).run(crypto.randomUUID(), userId, tenantId, action, ip, userAgent, details);
+    await db.insert(auditLogs).values({
+      id: crypto.randomUUID(),
+      userId,
+      tenantId,
+      action,
+      ipAddress: ip,
+      userAgent,
+      details,
+    });
   } catch (err) {
     logger.error('Failed to save audit log to database', { error: err, action, userId });
   }

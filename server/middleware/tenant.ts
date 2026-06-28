@@ -1,6 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { db } from '../database.js';
 import { error, ErrorCode } from '../utils/response.js';
+import { tenants } from '../schema.js';
+import { eq } from 'drizzle-orm';
 
 declare global {
   namespace Express {
@@ -10,18 +12,21 @@ declare global {
   }
 }
 
-export function tenantContext(req: Request, res: Response, next: NextFunction) {
-  const tenantId = req.headers['x-tenant-id']?.toString() || 
-                   req.query.tenant_id?.toString() || 
-                   'default';
+export async function tenantContext(req: Request, res: Response, next: NextFunction) {
+  try {
+    const tenantId = req.headers['x-tenant-id']?.toString() ||
+                     req.query.tenant_id?.toString() ||
+                     'default';
 
-  // Verify tenant exists
-  const tenant = db.prepare('SELECT id FROM tenants WHERE id = ?').get(tenantId);
-  
-  if (!tenant) {
-    return res.status(400).json(error(`Tenant '${tenantId}' not found`, ErrorCode.RESOURCE_NOT_FOUND));
+    const [tenant] = await db.select({ id: tenants.id }).from(tenants).where(eq(tenants.id, tenantId)).limit(1);
+
+    if (!tenant) {
+      return res.status(400).json(error(`Tenant '${tenantId}' not found`, ErrorCode.RESOURCE_NOT_FOUND));
+    }
+
+    req.tenantId = tenantId;
+    next();
+  } catch (err) {
+    next(err);
   }
-
-  req.tenantId = tenantId;
-  next();
 }

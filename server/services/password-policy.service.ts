@@ -4,21 +4,23 @@ import bcrypt from 'bcryptjs';
 import { db } from '../database.js';
 import { ErrorCode } from '../utils/response.js';
 import { isWeakPassword } from '../utils/weak-passwords.js';
+import { tenantPasswordPolicies, passwordHistory } from '../schema.js';
+import { eq, desc, lt, sql, count } from 'drizzle-orm';
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
 
 /** Tenant-level password policy configuration (read from DB or defaults) */
 export interface TenantPasswordPolicy {
-  min_length: number;           // Minimum password length, default 8
-  history_count: number;        // Number of historical passwords to check, default 5
-  rotation_enabled: boolean;    // Whether password rotation is enabled, default false
-  rotation_period_days: number; // Rotation period in days, default 90
+  min_length: number;
+  history_count: number;
+  rotation_enabled: boolean;
+  rotation_period_days: number;
 }
 
 /** A single policy violation */
 export interface PolicyViolation {
-  code: string;    // Corresponds to an ErrorCode enum value
-  message: string; // Human-readable error description
+  code: string;
+  message: string;
 }
 
 /** Result of a password validation */
@@ -29,7 +31,6 @@ export interface PolicyValidationResult {
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-/** System-wide default password policy (used when tenant has no custom config) */
 export const DEFAULT_PASSWORD_POLICY: TenantPasswordPolicy = {
   min_length: 8,
   history_count: 5,
@@ -39,59 +40,39 @@ export const DEFAULT_PASSWORD_POLICY: TenantPasswordPolicy = {
 
 // ─── Policy Retrieval ─────────────────────────────────────────────────────────
 
-/**
- * Retrieve the password policy for a given tenant.
- * Falls back to DEFAULT_PASSWORD_POLICY if no custom policy is configured.
- */
-export function getTenantPasswordPolicy(tenantId: string): TenantPasswordPolicy {
-  const row = db
-    .prepare(
-      'SELECT min_length, history_count, rotation_enabled, rotation_period_days FROM tenant_password_policies WHERE tenant_id = ?'
-    )
-    .get(tenantId) as
-    | {
-        min_length: number;
-        history_count: number;
-        rotation_enabled: number; // SQLite stores booleans as 0/1
-        rotation_period_days: number;
-      }
-    | undefined;
+export async function getTenantPasswordPolicy(tenantId: string): Promise<TenantPasswordPolicy> {
+  const [row] = await db
+    .select({
+      minLength: tenantPasswordPolicies.minLength,
+      historyCount: tenantPasswordPolicies.historyCount,
+      rotationEnabled: tenantPasswordPolicies.rotationEnabled,
+      rotationPeriodDays: tenantPasswordPolicies.rotationPeriodDays,
+    })
+    .from(tenantPasswordPolicies)
+    .where(eq(tenantPasswordPolicies.tenantId, tenantId))
+    .limit(1);
 
   if (!row) {
     return { ...DEFAULT_PASSWORD_POLICY };
   }
 
   return {
-    min_length: row.min_length,
-    history_count: row.history_count,
-    rotation_enabled: row.rotation_enabled === 1,
-    rotation_period_days: row.rotation_period_days,
+    min_length: row.minLength,
+    history_count: row.historyCount,
+    rotation_enabled: row.rotationEnabled ?? false,
+    rotation_period_days: row.rotationPeriodDays,
   };
 }
 
 // ─── Password Validation ──────────────────────────────────────────────────────
 
-/**
- * Validate a password against the tenant's policy.
- *
- * Performs the full validation chain:
- *   1. Strength checks (uppercase, lowercase, digit, special char, length) — collects ALL violations
- *   2. Weak password detection via isWeakPassword()
- *   3. History comparison via bcrypt.compareSync when userId is not null
- *
- * @param password  The plaintext password to validate
- * @param userId    The user's ID (null for registration — no history to check)
- * @param tenantId  The tenant ID used to look up the policy
- */
-export function validatePassword(
+export async function validatePassword(
   password: string,
   userId: string | null,
   tenantId: string
-): PolicyValidationResult {
-  const policy = getTenantPasswordPolicy(tenantId);
+): Promise<PolicyValidationResult> {
+  const policy = await getTenantPasswordPolicy(tenantId);
   const violations: PolicyViolation[] = [];
-
-  // ── 1. Strength checks (collect ALL, no early return) ──────────────────────
 
   if (password.length < policy.min_length) {
     violations.push({
@@ -128,8 +109,6 @@ export function validatePassword(
     });
   }
 
-  // ── 2. Weak password detection ─────────────────────────────────────────────
-
   if (isWeakPassword(password)) {
     violations.push({
       code: ErrorCode.PASSWORD_TOO_COMMON,
@@ -137,20 +116,16 @@ export function validatePassword(
     });
   }
 
-  // ── 3. History comparison (only when userId is provided) ───────────────────
-
   if (userId !== null) {
-    const historyRows = db
-      .prepare(
-        `SELECT password_hash FROM password_history
-         WHERE user_id = ?
-         ORDER BY created_at DESC
-         LIMIT ?`
-      )
-      .all(userId, policy.history_count) as { password_hash: string }[];
+    const historyRows = await db
+      .select({ passwordHash: passwordHistory.passwordHash })
+      .from(passwordHistory)
+      .where(eq(passwordHistory.userId, userId))
+      .orderBy(desc(passwordHistory.createdAt))
+      .limit(policy.history_count);
 
     const recentlyUsed = historyRows.some(row =>
-      bcrypt.compareSync(password, row.password_hash)
+      bcrypt.compareSync(password, row.passwordHash)
     );
 
     if (recentlyUsed) {
@@ -169,66 +144,44 @@ export function validatePassword(
 
 // ─── Password History ─────────────────────────────────────────────────────────
 
-/**
- * Record a new password hash in the user's password history.
- *
- * Inserts the new record, then deletes any records beyond the tenant's
- * history_count limit (keeping only the most recent N entries).
- *
- * Should be called by the business layer AFTER a successful password change,
- * not inside validatePassword.
- *
- * @param userId        The user's ID
- * @param passwordHash  The bcrypt hash of the new password
- * @param tenantId      The tenant ID used to look up the history_count limit
- */
-export function recordPasswordHistory(
+export async function recordPasswordHistory(
   userId: string,
   passwordHash: string,
   tenantId: string
-): void {
-  const policy = getTenantPasswordPolicy(tenantId);
+): Promise<void> {
+  const policy = await getTenantPasswordPolicy(tenantId);
 
-  // Insert new record
-  db.prepare(
-    'INSERT INTO password_history (id, user_id, password_hash, tenant_id) VALUES (?, ?, ?, ?)'
-  ).run(crypto.randomUUID(), userId, passwordHash, tenantId);
+  await db.insert(passwordHistory).values({
+    id: crypto.randomUUID(),
+    userId,
+    passwordHash,
+    tenantId,
+  });
 
   // Delete records exceeding the history_count limit (keep most recent N)
-  db.prepare(
-    `DELETE FROM password_history
-     WHERE user_id = ? AND id NOT IN (
-       SELECT id FROM password_history
-       WHERE user_id = ?
-       ORDER BY created_at DESC
-       LIMIT ?
-     )`
-  ).run(userId, userId, policy.history_count);
+  await db.execute(sql`
+    DELETE FROM password_history
+    WHERE user_id = ${userId} AND id NOT IN (
+      SELECT id FROM password_history
+      WHERE user_id = ${userId}
+      ORDER BY created_at DESC
+      LIMIT ${policy.history_count}
+    )
+  `);
 }
 
 // ─── Password Expiry ──────────────────────────────────────────────────────────
 
-/**
- * Check whether a user's password has expired based on the tenant's rotation policy.
- *
- * @param passwordChangedAt  ISO timestamp of the last password change (or null)
- * @param tenantId           The tenant ID used to look up the rotation policy
- * @returns  { expired: boolean; expiresAt: string | null }
- *           - If rotation is disabled, always returns { expired: false, expiresAt: null }
- *           - If passwordChangedAt is null and rotation is enabled, treats as expired
- */
-export function isPasswordExpired(
+export async function isPasswordExpired(
   passwordChangedAt: string | null,
   tenantId: string
-): { expired: boolean; expiresAt: string | null } {
-  const policy = getTenantPasswordPolicy(tenantId);
+): Promise<{ expired: boolean; expiresAt: string | null }> {
+  const policy = await getTenantPasswordPolicy(tenantId);
 
-  // Rotation not enabled — never expired
   if (!policy.rotation_enabled) {
     return { expired: false, expiresAt: null };
   }
 
-  // No recorded change date — treat as expired when rotation is enabled
   if (passwordChangedAt === null) {
     return { expired: true, expiresAt: null };
   }

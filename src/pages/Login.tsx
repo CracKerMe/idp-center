@@ -1,10 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { Shield } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { parseApiResponse, isSuccess, getErrorMessage } from '../utils/fetch';
+import type { AuthUser } from '../types/user';
+import { OtpInput } from '../components/OtpInput';
+import { GithubOAuthButton } from '../components/GithubOAuthButton';
+import { EmailVerificationResend } from '../components/EmailVerificationResend';
+import { DeviceTrustOptions } from '../components/DeviceTrustOptions';
 
-export default function Login({ setUser }: { setUser: (user: any) => void }) {
+export default function Login({ setUser }: { setUser: (user: AuthUser | null) => void }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [otp, setOtp] = useState('');
@@ -13,96 +18,53 @@ export default function Login({ setUser }: { setUser: (user: any) => void }) {
   const [trustDevice, setTrustDevice] = useState(false);
   const [error, setError] = useState('');
   const [emailNotVerified, setEmailNotVerified] = useState(false);
-  const [resendStatus, setResendStatus] = useState<'idle' | 'sending' | 'sent'>('idle');
-  const [githubEnabled, setGithubEnabled] = useState<boolean | null>(null);
+  const [mustChangePassword, setMustChangePassword] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const navigate = useNavigate();
-  const searchParams: any = useSearch({ strict: false });
+  const searchParams: Record<string, unknown> = useSearch({ strict: false });
+  const redirect = typeof searchParams.redirect === 'string' ? searchParams.redirect : undefined;
 
-  // Read error from URL params (e.g. /login?error=...)
   useEffect(() => {
-    if (searchParams.error) {
+    if (typeof searchParams.error === 'string') {
       setError(searchParams.error);
     }
   }, [searchParams.error]);
 
-  // Check if GitHub OAuth is enabled
-  useEffect(() => {
-    fetch('/api/auth/github/config')
-      .then(res => parseApiResponse<{ enabled: boolean }>(res))
-      .then(result => {
-        if (isSuccess(result) && result.data) {
-          setGithubEnabled(result.data.enabled ?? false);
-        } else {
-          setGithubEnabled(false);
-        }
-      })
-      .catch(() => setGithubEnabled(false));
-  }, []);
-
-  const handleGitHubLoginClick = () => {
-    const redirect = searchParams.redirect;
-    const safeRedirect =
-      typeof redirect === 'string' &&
-      redirect.startsWith('/') &&
-      !redirect.startsWith('//')
-        ? redirect
-        : '/';
-    localStorage.setItem('github_post_login_redirect', safeRedirect);
-  };
-
-  const handleResendVerification = async () => {
-    setResendStatus('sending');
-    try {
-      const res = await fetch('/api/auth/email/resend-public', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username })
-      });
-      const result = await parseApiResponse(res);
-      if (isSuccess(result)) {
-        setResendStatus('sent');
-      } else {
-        setResendStatus('idle');
-      }
-    } catch {
-      setResendStatus('idle');
-    }
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    
+
     const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password, otp: otp || undefined, remember_me: rememberMe, trust_device: trustDevice })
+      body: JSON.stringify({
+        username,
+        password,
+        otp: otp || undefined,
+        remember_me: rememberMe,
+        trust_device: trustDevice,
+      }),
     });
 
     const result = await parseApiResponse<{
       access_token?: string;
       refresh_token?: string;
       session_id?: string;
-      device_trusted?: boolean;
-      user?: any;
+      user?: AuthUser;
       requireOtp?: boolean;
       unlock_at?: string;
+      must_change_password?: boolean;
     }>(res);
     const { data, code, error: apiError } = result;
 
     if (code === 0) {
       localStorage.setItem('token', data!.access_token!);
       localStorage.setItem('refresh_token', data!.refresh_token!);
-      if (data!.session_id) {
-        localStorage.setItem('session_id', data!.session_id);
-      }
-      if (data!.user?.tenant_id) {
-        localStorage.setItem('tenant_id', data!.user.tenant_id);
-      }
-      setUser(data!.user);
-      const redirect = searchParams.redirect;
-      if (redirect && typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//')) {
-        // Hash mode: navigate using hash
+      if (data!.session_id) localStorage.setItem('session_id', data!.session_id);
+      if (data!.user?.tenant_id) localStorage.setItem('tenant_id', data!.user.tenant_id);
+      setUser(data!.user ?? null);
+      if (redirect && redirect.startsWith('/') && !redirect.startsWith('//')) {
         window.location.href = '/#' + redirect;
       } else {
         navigate({ to: '/' });
@@ -110,24 +72,69 @@ export default function Login({ setUser }: { setUser: (user: any) => void }) {
     } else {
       if (data?.requireOtp) {
         setRequireOtp(true);
+      } else if (code === 'PASSWORD_EXPIRED' && data?.must_change_password) {
+        setMustChangePassword(true);
+        setError('');
       } else {
-        // Map backend error codes to user-friendly messages
         const errorMessages: Record<string, string> = {
-          'ACCOUNT_NOT_VERIFIED': 'Your email has not been verified. Please check your inbox for a verification link.',
-          'ACCOUNT_PENDING_DELETION': 'This account is scheduled for deletion. Please contact support to cancel.',
-          'ACCOUNT_LOCKED': data?.unlock_at
+          ACCOUNT_NOT_VERIFIED: 'Your email has not been verified. Please check your inbox for a verification link.',
+          ACCOUNT_PENDING_DELETION: 'This account is scheduled for deletion. Please contact support to cancel.',
+          ACCOUNT_LOCKED: data?.unlock_at
             ? `Account is temporarily locked. Try again after ${new Date(data.unlock_at).toLocaleTimeString()}.`
             : 'Account is temporarily locked due to too many failed attempts.',
-          'ACCOUNT_DISABLED': 'This account has been disabled. Please contact an administrator.',
+          ACCOUNT_DISABLED: 'This account has been disabled. Please contact an administrator.',
         };
-        if (code === 'ACCOUNT_NOT_VERIFIED') {
-          setEmailNotVerified(true);
-          setResendStatus('idle');
-        } else {
-          setEmailNotVerified(false);
-        }
+        setEmailNotVerified(code === 'ACCOUNT_NOT_VERIFIED');
         setError(errorMessages[code as string] || apiError || 'Login failed');
       }
+    }
+  };
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+
+    if (newPassword !== confirmPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+
+    const res = await fetch('/api/auth/password/change-expired', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username,
+        current_password: password,
+        new_password: newPassword,
+      }),
+    });
+
+    const result = await parseApiResponse<{ message?: string }>(res);
+    if (result.code === 0) {
+      setError('');
+      setMustChangePassword(false);
+      // Auto-login with new password
+      const loginRes = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password: newPassword, remember_me: rememberMe }),
+      });
+      const loginResult = await parseApiResponse<{
+        access_token?: string;
+        refresh_token?: string;
+        user?: AuthUser;
+      }>(loginRes);
+      if (loginResult.code === 0 && loginResult.data) {
+        localStorage.setItem('token', loginResult.data.access_token!);
+        localStorage.setItem('refresh_token', loginResult.data.refresh_token!);
+        if (loginResult.data.user?.tenant_id) localStorage.setItem('tenant_id', loginResult.data.user.tenant_id);
+        setUser(loginResult.data.user ?? null);
+        navigate({ to: '/' });
+      } else {
+        setError(loginResult.error || 'Login failed after password change');
+      }
+    } else {
+      setError(result.error || 'Password change failed');
     }
   };
 
@@ -144,6 +151,66 @@ export default function Login({ setUser }: { setUser: (user: any) => void }) {
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
         <div className="bg-white dark:bg-zinc-900 py-8 px-4 shadow sm:rounded-lg sm:px-10">
+          {mustChangePassword ? (
+            <form className="space-y-6" onSubmit={handleChangePassword}>
+              <div>
+                <h3 className="text-lg font-semibold text-zinc-900 dark:text-white mb-2">
+                  Change Your Password
+                </h3>
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  You must change your password before continuing.
+                </p>
+              </div>
+
+              <AnimatePresence initial={false}>
+                {error && (
+                  <motion.div
+                    key={error}
+                    initial={{ opacity: 0, y: -8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -8 }}
+                    transition={{ duration: 0.18, ease: 'easeOut' }}
+                    className="text-sm text-center"
+                  >
+                    <p className="text-red-600">{error}</p>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <div>
+                <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">New Password</label>
+                <input
+                  type="password"
+                  required
+                  minLength={8}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="mt-1 appearance-none block w-full px-3 py-2 border border-zinc-300 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white rounded-md shadow-sm placeholder-zinc-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">Confirm Password</label>
+                <input
+                  type="password"
+                  required
+                  minLength={8}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="mt-1 appearance-none block w-full px-3 py-2 border border-zinc-300 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white rounded-md shadow-sm placeholder-zinc-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                />
+              </div>
+
+              <div>
+                <button
+                  type="submit"
+                  className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                >
+                  Change Password
+                </button>
+              </div>
+            </form>
+          ) : (
           <form className="space-y-6" onSubmit={handleSubmit}>
             <AnimatePresence initial={false}>
               {error && (
@@ -159,24 +226,13 @@ export default function Login({ setUser }: { setUser: (user: any) => void }) {
                   <p className="text-red-600">{error}</p>
                   {emailNotVerified && (
                     <div className="mt-2">
-                      {resendStatus === 'sent' ? (
-                        <p className="text-green-600">Verification email sent. Please check your inbox.</p>
-                      ) : (
-                        <button
-                          type="button"
-                          disabled={resendStatus === 'sending'}
-                          onClick={handleResendVerification}
-                          className="text-indigo-600 hover:text-indigo-500 font-medium disabled:opacity-50"
-                        >
-                          {resendStatus === 'sending' ? 'Sending...' : 'Resend verification email'}
-                        </button>
-                      )}
+                      <EmailVerificationResend username={username} />
                     </div>
                   )}
                 </motion.div>
               )}
             </AnimatePresence>
-            
+
             <div>
               <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">Username</label>
               <div className="mt-1">
@@ -219,42 +275,17 @@ export default function Login({ setUser }: { setUser: (user: any) => void }) {
                   transition={{ duration: 0.24, ease: 'easeOut' }}
                   className="overflow-hidden"
                 >
-                  <div>
-                    <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">Authenticator Code (OTP)</label>
-                    <div className="mt-1">
-                      <input
-                        type="text"
-                        required
-                        value={otp}
-                        onChange={(e) => setOtp(e.target.value)}
-                        className="appearance-none block w-full px-3 py-2 border border-zinc-300 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white rounded-md shadow-sm placeholder-zinc-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                      />
-                    </div>
-                  </div>
+                  <OtpInput value={otp} onChange={setOtp} />
                 </motion.div>
               )}
             </AnimatePresence>
 
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={rememberMe}
-                  onChange={(e) => setRememberMe(e.target.checked)}
-                  className="h-4 w-4 text-indigo-600 border-zinc-300 rounded focus:ring-indigo-500"
-                />
-                Remember me
-              </label>
-              <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={trustDevice}
-                  onChange={(e) => setTrustDevice(e.target.checked)}
-                  className="h-4 w-4 text-indigo-600 border-zinc-300 rounded focus:ring-indigo-500"
-                />
-                Trust this device
-              </label>
-            </div>
+            <DeviceTrustOptions
+              rememberMe={rememberMe}
+              onRememberMeChange={setRememberMe}
+              trustDevice={trustDevice}
+              onTrustDeviceChange={setTrustDevice}
+            />
 
             <div>
               <button
@@ -265,34 +296,11 @@ export default function Login({ setUser }: { setUser: (user: any) => void }) {
               </button>
             </div>
           </form>
-
-          {githubEnabled && (
-            <div className="mt-6">
-              <div className="relative">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-zinc-300 dark:border-zinc-700" />
-                </div>
-                <div className="relative flex justify-center text-sm">
-                  <span className="px-2 bg-white dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400">Or continue with</span>
-                </div>
-              </div>
-
-              <div className="mt-4">
-                <a
-                  href="/api/auth/github"
-                  onClick={handleGitHubLoginClick}
-                  data-testid="github-login-button"
-                  className="w-full flex justify-center items-center gap-2 py-2 px-4 border border-zinc-300 dark:border-zinc-700 rounded-md shadow-sm text-sm font-medium text-zinc-700 dark:text-zinc-300 bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                >
-                  <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                    <path fillRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clipRule="evenodd" />
-                  </svg>
-                  Sign in with GitHub
-                </a>
-              </div>
-            </div>
           )}
 
+          {!mustChangePassword && <GithubOAuthButton redirect={redirect} />}
+
+          {!mustChangePassword && (
           <div className="mt-6">
             <div className="relative">
               <div className="absolute inset-0 flex items-center">
@@ -309,6 +317,7 @@ export default function Login({ setUser }: { setUser: (user: any) => void }) {
               </Link>
             </div>
           </div>
+          )}
         </div>
       </div>
     </div>

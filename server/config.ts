@@ -5,7 +5,6 @@ import { fileURLToPath } from 'url';
 
 const EnvSchema = z.object({
   JWT_SECRET: z.string().min(32, 'JWT_SECRET 至少需要 32 个字符'),
-  JWT_REFRESH_SECRET: z.string().min(32, 'JWT_REFRESH_SECRET 至少需要 32 个字符'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.coerce.number().default(5986),
   APP_URL: z.url().default('http://localhost:5986'),
@@ -18,7 +17,12 @@ const EnvSchema = z.object({
   GITHUB_CLIENT_SECRET: z.string().optional(),
   GITHUB_CALLBACK_URL: z.url().optional(),
   ENCRYPTION_KEY: z.string().min(32).optional(),
-  DB_PATH: z.string().default('auth.db'),
+  DATABASE_URL: z.string().optional(),
+  PG_HOST: z.string().default('localhost'),
+  PG_PORT: z.coerce.number().int().positive().default(5432),
+  PG_USER: z.string().default('postgres'),
+  PG_PASSWORD: z.string().default(''),
+  PG_DATABASE: z.string().default('idp_center'),
   JWT_EXPIRES_IN: z.string().default('1h'),
 });
 
@@ -31,10 +35,27 @@ if (!_env.success) {
 
 export const config = _env.data;
 
+export const connectionString =
+  config.DATABASE_URL ||
+  `postgres://${config.PG_USER}:${config.PG_PASSWORD}@${config.PG_HOST}:${config.PG_PORT}/${config.PG_DATABASE}`;
+
 export const SECURITY_CONFIG = {
   maxFailedAttempts: 5,
   lockDurationMinutes: 15,
 };
+
+/** Centralized token expiry configuration — use these everywhere instead of magic numbers */
+export const TOKEN_CONFIG = {
+  accessTokenExpiry: '15m',
+  accessTokenExpirySeconds: 15 * 60,
+  accessTokenExpiryMs: 15 * 60 * 1000,
+  refreshTokenExpiryDays: 7,
+  refreshTokenExpiryMs: 7 * 24 * 60 * 60 * 1000,
+  refreshTokenRememberMeDays: 30,
+  refreshTokenRememberMeMs: 30 * 24 * 60 * 60 * 1000,
+  trustedDeviceExpiryDays: 30,
+  trustedDeviceExpiryMs: 30 * 24 * 60 * 60 * 1000,
+} as const;
 
 // Project root directory (server/config.ts lives at <root>/server/config.ts)
 export const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');

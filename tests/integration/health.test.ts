@@ -1,25 +1,21 @@
-import { describe, it, expect, afterAll, vi } from 'vitest';
-vi.hoisted(() => {
-  process.env.DB_PATH = 'health_integration.test.db';
-});
+import { describe, it, expect, beforeAll, vi } from 'vitest';
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 60_000 });
 
-import fs from 'fs';
-import request from 'supertest';
+import { initDatabase } from '../../server/database.js';
+
 import { app } from '../../server.js';
-import { db } from '../../server/database.js';
+import request from 'supertest';
 
-const DB_FILE = process.env.DB_PATH!;
+const skipIfNoDb = !process.env.DATABASE_URL && !process.env.PG_HOST;
 
-describe('Health API Integration', () => {
-  afterAll(() => {
-    if (fs.existsSync(DB_FILE)) {
-      fs.unlinkSync(DB_FILE);
-    }
+describe.skipIf(skipIfNoDb)('Health API Integration', () => {
+  beforeAll(async () => {
+    await initDatabase();
   });
 
   it('returns 200 and healthy status', async () => {
     const response = await request(app).get('/api/health');
-    
+
     expect(response.status).toBe(200);
     expect(response.body).toHaveProperty('status', 'healthy');
     expect(response.body.services).toHaveProperty('database', 'ok');

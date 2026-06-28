@@ -1,16 +1,26 @@
-import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
-vi.hoisted(() => {
-  process.env.DB_PATH = 'user_integration.test.db';
-});
+import { describe, it, expect, beforeEach, beforeAll, vi } from 'vitest';
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 60_000 });
+import { db, initDatabase } from '../../server/database.js';
+import { sql, eq } from 'drizzle-orm';
+import {
+  users,
+  emailVerifications,
+  refreshTokens,
+  sessions,
+  passwordResets,
+  accessTokens,
+  trustedDevices,
+  linkedAccounts,
+  accountDeletionRequests,
+  passwordHistory,
+} from '../../server/schema.js';
 
-import fs from 'fs';
-import request from 'supertest';
 import { app } from '../../server.js';
-import { db } from '../../server/database.js';
+import request from 'supertest';
 
-const DB_FILE = process.env.DB_PATH!;
+const skipIfNoDb = !process.env.DATABASE_URL && !process.env.PG_HOST;
 
-describe('User API Integration', () => {
+describe.skipIf(skipIfNoDb)('User API Integration', () => {
   const testUser = {
     username: 'userprofiletest',
     email: 'userprofile@example.com',
@@ -19,41 +29,32 @@ describe('User API Integration', () => {
   let accessToken: string;
   let userId: string;
 
-  afterAll(() => {
-    if (fs.existsSync(DB_FILE)) {
-      fs.unlinkSync(DB_FILE);
-    }
+  beforeAll(async () => {
+    await initDatabase();
   });
 
   beforeEach(async () => {
-    // Cleanup
-    const tables = [
-      'email_verifications',
-      'refresh_tokens',
-      'sessions',
-      'password_resets',
-      'access_tokens',
-      'trusted_devices',
-      'linked_accounts',
-      'account_deletion_requests',
-      'password_history',
-    ];
-    for (const table of tables) {
-      db.prepare(`DELETE FROM ${table}`).run();
-    }
-    db.prepare('DELETE FROM users WHERE username != ?').run('admin');
-    
-    // Register, verify and login to get access token
+    await db.delete(passwordHistory);
+    await db.delete(accountDeletionRequests);
+    await db.delete(linkedAccounts);
+    await db.delete(trustedDevices);
+    await db.delete(accessTokens);
+    await db.delete(passwordResets);
+    await db.delete(sessions);
+    await db.delete(refreshTokens);
+    await db.delete(emailVerifications);
+    await db.delete(users).where(eq(users.username, 'userprofiletest'));
+
     const regRes = await request(app).post('/api/auth/register').send(testUser);
     expect(regRes.status).toBe(200);
 
-    db.prepare('UPDATE users SET email_verified = 1 WHERE username = ?').run(testUser.username);
-    
+    await db.update(users).set({ emailVerified: true }).where(eq(users.username, testUser.username));
+
     const loginRes = await request(app).post('/api/auth/login').send({
       username: testUser.username,
       password: testUser.password,
     });
-    
+
     expect(loginRes.status).toBe(200);
     accessToken = loginRes.body.data.access_token;
     userId = loginRes.body.data.user.id;
@@ -91,8 +92,8 @@ describe('User API Integration', () => {
       expect(response.status).toBe(200);
       expect(response.body).toHaveProperty('message', 'Profile updated successfully');
 
-      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
-      expect(user.full_name).toBe(updateData.full_name);
+      const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+      expect(user.fullName).toBe(updateData.full_name);
       expect(user.phone).toBe(updateData.phone);
     });
   });
