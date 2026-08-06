@@ -118,7 +118,7 @@ router.post('/token', async (req, res) => {
     });
 
     const newAccessToken = jwt.sign(
-      { id: user.id, username: user.username, isAdmin: user.isAdmin, tenantId: user.tenantId },
+      { id: user.id, username: user.username, isAdmin: user.isAdmin, tenantId: user.tenantId, jti: crypto.randomUUID() },
       config.JWT_SECRET,
       { expiresIn: TOKEN_CONFIG.accessTokenExpiry }
     );
@@ -182,7 +182,7 @@ router.post('/token', async (req, res) => {
   const tokenScope = authCode.scope || 'openid';
 
   const accessToken = jwt.sign(
-    { id: user.id, username: user.username, isAdmin: user.isAdmin, tenantId: user.tenantId },
+    { id: user.id, username: user.username, isAdmin: user.isAdmin, tenantId: user.tenantId, jti: crypto.randomUUID() },
     config.JWT_SECRET,
     { expiresIn: TOKEN_CONFIG.accessTokenExpiry }
   );

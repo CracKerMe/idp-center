@@ -188,7 +188,7 @@ router.post('/login', validate({ body: loginSchema }), async (req, res) => {
   }
 
   const accessToken = jwt.sign(
-    { id: user.id, username: user.username, is_admin: user.isAdmin, tenant_id: user.tenantId },
+    { id: user.id, username: user.username, is_admin: user.isAdmin, tenant_id: user.tenantId, jti: crypto.randomUUID() },
     config.JWT_SECRET,
     { expiresIn: TOKEN_CONFIG.accessTokenExpiry }
   );
@@ -554,7 +554,7 @@ router.post('/refresh', validate({ body: tokenRefreshSchema }), async (req, res)
 
   // Sign new access token
   const accessToken = jwt.sign(
-    { id: user.id, username: user.username, is_admin: user.isAdmin, tenant_id: user.tenantId },
+    { id: user.id, username: user.username, is_admin: user.isAdmin, tenant_id: user.tenantId, jti: crypto.randomUUID() },
     config.JWT_SECRET,
     { expiresIn: TOKEN_CONFIG.accessTokenExpiry }
   );
