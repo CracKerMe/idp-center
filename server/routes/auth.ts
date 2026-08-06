@@ -187,8 +187,12 @@ router.post('/login', validate({ body: loginSchema }), async (req, res) => {
     });
   }
 
+  // Created before signing so the access token can carry it as `bsid` — the OIDC
+  // session (server/schema.ts oidcSessions) links back to this browser/SSO session.
+  const sessionId = crypto.randomUUID();
+
   const accessToken = jwt.sign(
-    { id: user.id, username: user.username, is_admin: user.isAdmin, tenant_id: user.tenantId, jti: crypto.randomUUID() },
+    { id: user.id, username: user.username, is_admin: user.isAdmin, tenant_id: user.tenantId, bsid: sessionId, jti: crypto.randomUUID() },
     config.JWT_SECRET,
     { expiresIn: TOKEN_CONFIG.accessTokenExpiry }
   );
@@ -198,6 +202,7 @@ router.post('/login', validate({ body: loginSchema }), async (req, res) => {
     token: accessToken,
     clientId: 'system',
     userId: user.id,
+    tenantId,
     expiresAt: accessExpiresAt,
   });
 
@@ -205,7 +210,6 @@ router.post('/login', validate({ body: loginSchema }), async (req, res) => {
   const refreshDays = remember_me === true ? TOKEN_CONFIG.refreshTokenRememberMeDays : TOKEN_CONFIG.refreshTokenExpiryDays;
   const refreshExpiresAt = new Date(Date.now() + (remember_me === true ? TOKEN_CONFIG.refreshTokenRememberMeMs : TOKEN_CONFIG.refreshTokenExpiryMs));
 
-  const sessionId = crypto.randomUUID();
   await db.insert(sessions).values({
     id: sessionId,
     userId: user.id,
@@ -559,6 +563,16 @@ router.post('/refresh', validate({ body: tokenRefreshSchema }), async (req, res)
     { expiresIn: TOKEN_CONFIG.accessTokenExpiry }
   );
   const accessExpiresAt = new Date(Date.now() + TOKEN_CONFIG.accessTokenExpiryMs);
+  // isTokenRevoked() is fail-closed (no row = revoked), so the new access token must be
+  // recorded here or every request using it would immediately 401.
+  await db.insert(accessTokens).values({
+    id: crypto.randomUUID(),
+    token: accessToken,
+    clientId: storedToken.clientId || 'system',
+    userId: user.id,
+    tenantId: user.tenantId || 'default',
+    expiresAt: accessExpiresAt,
+  });
 
   // Rotate refresh token
   const newExpiresAt = new Date(Date.now() + (storedToken.rememberMe ? TOKEN_CONFIG.refreshTokenRememberMeMs : TOKEN_CONFIG.refreshTokenExpiryMs));

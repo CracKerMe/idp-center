@@ -1,7 +1,6 @@
 import 'dotenv/config';
 import { z } from 'zod';
 import path from 'path';
-import { fileURLToPath } from 'url';
 
 const EnvSchema = z.object({
   JWT_SECRET: z.string().min(32, 'JWT_SECRET 至少需要 32 个字符'),
@@ -24,6 +23,7 @@ const EnvSchema = z.object({
   PG_PASSWORD: z.string().default(''),
   PG_DATABASE: z.string().default('idp_center'),
   JWT_EXPIRES_IN: z.string().default('1h'),
+  OAUTH_ENFORCE_GRANT_TYPES: z.coerce.boolean().default(false),
 });
 
 const _env = EnvSchema.safeParse(process.env);
@@ -57,5 +57,5 @@ export const TOKEN_CONFIG = {
   trustedDeviceExpiryMs: 30 * 24 * 60 * 60 * 1000,
 } as const;
 
-// Project root directory (server/config.ts lives at <root>/server/config.ts)
-export const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+// Runtime project root. In production compiled files run from build/, so module-relative paths are unstable.
+export const rootDir = path.resolve(process.cwd());

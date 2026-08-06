@@ -4,7 +4,7 @@
  */
 
 import { db } from '../database.js';
-import { accessTokens } from '../schema.js';
+import { accessTokens, refreshTokens } from '../schema.js';
 import { eq, and, gt, lt, inArray, ne } from 'drizzle-orm';
 
 export interface TokenBlacklistEntry {
@@ -57,6 +57,31 @@ export async function isTokenRevoked(token: string): Promise<boolean> {
     .limit(1);
 
   return !record || record.revoked === true;
+}
+
+/**
+ * Revoke every access token (and their paired refresh tokens) issued under a
+ * given OIDC session — used by RP-initiated logout to end a client's tokens
+ * without touching other clients sharing the same browser SSO session.
+ */
+export async function revokeTokensBySession(
+  oidcSessionId: string,
+  reason: RevokeReason = RevokeReason.LOGOUT
+): Promise<{ accessTokens: number; refreshTokens: number }> {
+  const atResult = await db
+    .update(accessTokens)
+    .set({ revoked: true, revokedAt: new Date(), revokeReason: reason })
+    .where(and(eq(accessTokens.oidcSessionId, oidcSessionId), eq(accessTokens.revoked, false)));
+
+  const rtResult = await db
+    .update(refreshTokens)
+    .set({ revoked: true })
+    .where(and(eq(refreshTokens.oidcSessionId, oidcSessionId), eq(refreshTokens.revoked, false)));
+
+  return {
+    accessTokens: (atResult as any).rowCount ?? 0,
+    refreshTokens: (rtResult as any).rowCount ?? 0,
+  };
 }
 
 /**

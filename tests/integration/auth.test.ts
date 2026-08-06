@@ -172,6 +172,14 @@ describe.skipIf(skipIfNoDb)('Auth API Integration', () => {
       expect(response.body.data).toHaveProperty('access_token');
       expect(response.body.data).toHaveProperty('refresh_token');
       expect(response.body.data.refresh_token).not.toBe(oldRefreshToken);
+
+      // Regression check: the new access_token must actually be usable. isTokenRevoked()
+      // is fail-closed (no access_tokens row = revoked), so if /refresh ever stops
+      // recording the token it issues, this 401s even though the response above looked fine.
+      const meResponse = await request(app)
+        .get('/api/auth/me')
+        .set('Authorization', `Bearer ${response.body.data.access_token}`);
+      expect(meResponse.status).toBe(200);
     });
   });
 });

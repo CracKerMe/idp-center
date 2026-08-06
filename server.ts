@@ -18,7 +18,6 @@ import { sql } from 'drizzle-orm';
 import { tenantContext } from './server/middleware/tenant.js';
 import { ipWhitelistGuard } from './server/middleware/ip-whitelist.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const app = express();
 
 // Security headers with helmet
@@ -44,15 +43,6 @@ app.use(helmet({
 }));
 
 app.use(express.json());
-app.use('/api', tenantContext);
-app.use('/api', ipWhitelistGuard);
-
-// Serve uploaded avatars
-const uploadsDir = path.join(rootDir, 'uploads', 'avatars');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
-app.use('/api/uploads', express.static(path.join(rootDir, 'uploads')));
 
 // Health check
 app.get('/api/health', async (req, res) => {
@@ -74,6 +64,16 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
+app.use('/api', tenantContext);
+app.use('/api', ipWhitelistGuard);
+
+// Serve uploaded avatars
+const uploadsDir = path.join(rootDir, 'uploads', 'avatars');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+app.use('/api/uploads', express.static(path.join(rootDir, 'uploads')));
+
 // Routes
 app.use('/api/auth/github', githubRouter);
 app.use('/api/auth', authRouter);
@@ -81,7 +81,6 @@ app.use('/api/oidc', oidcRouter);
 app.use('/api/user', userRouter);
 app.use('/api/admin', adminRouter);
 app.use('/.well-known', wellKnownRouter);
-app.use('/api/uploads', express.static(path.join(rootDir, 'uploads')));
 
 export async function startServer() {
   await initDatabase();

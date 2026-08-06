@@ -32,7 +32,7 @@ describe('cleanupExpiredTokens', () => {
     vi.clearAllMocks();
   });
 
-  it('returns counts of deleted rows from all 7 tables', async () => {
+  it('returns counts of deleted rows from all 11 tables', async () => {
     mockNoActiveSigningKey();
     // access_tokens: 2 deleted, rest: 1 deleted each
     mockDb.delete
@@ -42,7 +42,11 @@ describe('cleanupExpiredTokens', () => {
       .mockReturnValueOnce(createMockResult(1))   // oauth_states
       .mockReturnValueOnce(createMockResult(1))   // password_resets
       .mockReturnValueOnce(createMockResult(0))   // trusted_devices
-      .mockReturnValueOnce(createMockResult(0));  // signing_keys
+      .mockReturnValueOnce(createMockResult(0))   // signing_keys
+      .mockReturnValueOnce(createMockResult(0))   // device_codes
+      .mockReturnValueOnce(createMockResult(0))   // client_assertion_jtis
+      .mockReturnValueOnce(createMockResult(0))   // pushed_auth_requests
+      .mockReturnValueOnce(createMockResult(0));  // dpop_jtis
 
     const result = await cleanupExpiredTokens();
 
@@ -53,7 +57,11 @@ describe('cleanupExpiredTokens', () => {
     expect(result.passwordResets).toBe(1);
     expect(result.trustedDevices).toBe(0);
     expect(result.signingKeys).toBe(0);
-    expect(mockDb.delete).toHaveBeenCalledTimes(7);
+    expect(result.deviceCodes).toBe(0);
+    expect(result.clientAssertionJtis).toBe(0);
+    expect(result.pushedAuthRequests).toBe(0);
+    expect(result.dpopJtis).toBe(0);
+    expect(mockDb.delete).toHaveBeenCalledTimes(11);
   });
 
   it('returns all zeros when nothing is expired', async () => {
@@ -69,6 +77,10 @@ describe('cleanupExpiredTokens', () => {
     expect(result.passwordResets).toBe(0);
     expect(result.trustedDevices).toBe(0);
     expect(result.signingKeys).toBe(0);
+    expect(result.deviceCodes).toBe(0);
+    expect(result.clientAssertionJtis).toBe(0);
+    expect(result.pushedAuthRequests).toBe(0);
+    expect(result.dpopJtis).toBe(0);
   });
 
   it('does not propagate errors from individual table deletes', async () => {

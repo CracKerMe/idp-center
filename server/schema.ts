@@ -44,6 +44,16 @@ export const clients = pgTable('clients', {
   redirectUris: text('redirect_uris').notNull(),
   grantTypes: text('grant_types').notNull(),
   tenantId: text('tenant_id').default('default').references(() => tenants.id),
+  isResourceServer: boolean('is_resource_server').default(false),
+  allowedScopes: text('allowed_scopes'),
+  frontchannelLogoutUri: text('frontchannel_logout_uri'),
+  backchannelLogoutUri: text('backchannel_logout_uri'),
+  postLogoutRedirectUris: text('post_logout_redirect_uris'),
+  jwks: text('jwks'),
+  jwksUri: text('jwks_uri'),
+  tokenEndpointAuthMethod: text('token_endpoint_auth_method').default('client_secret_post'),
+  allowedAudiences: text('allowed_audiences'),
+  registrationTokenHash: text('registration_token_hash'),
   createdAt: timestamp('created_at').defaultNow(),
 });
 
@@ -52,6 +62,7 @@ export const authCodes = pgTable('auth_codes', {
   code: text('code').notNull().unique(),
   clientId: text('client_id').notNull(),
   userId: text('user_id').notNull(),
+  tenantId: text('tenant_id').notNull().default('default'),
   redirectUri: text('redirect_uri').notNull(),
   expiresAt: timestamp('expires_at').notNull(),
   used: boolean('used').default(false),
@@ -59,6 +70,7 @@ export const authCodes = pgTable('auth_codes', {
   scope: text('scope').default('openid'),
   codeChallenge: text('code_challenge'),
   codeChallengeMethod: text('code_challenge_method').default('S256'),
+  sid: text('sid'),
 });
 
 export const accessTokens = pgTable('access_tokens', {
@@ -66,6 +78,9 @@ export const accessTokens = pgTable('access_tokens', {
   token: text('token').notNull().unique(),
   clientId: text('client_id').notNull(),
   userId: text('user_id').notNull(),
+  tenantId: text('tenant_id').notNull().default('default'),
+  subjectType: text('subject_type').notNull().default('user'), // 'user' | 'client'
+  oidcSessionId: text('oidc_session_id'),
   expiresAt: timestamp('expires_at').notNull(),
   revoked: boolean('revoked').default(false),
   createdAt: timestamp('created_at').defaultNow(),
@@ -79,6 +94,10 @@ export const refreshTokens = pgTable('refresh_tokens', {
   token: text('token').notNull().unique(),
   userId: text('user_id').notNull().references(() => users.id),
   clientId: text('client_id'),
+  tenantId: text('tenant_id').notNull().default('default'),
+  scope: text('scope').default('openid'),
+  familyId: text('family_id'),
+  oidcSessionId: text('oidc_session_id'),
   expiresAt: timestamp('expires_at').notNull(),
   revoked: boolean('revoked').default(false),
   createdAt: timestamp('created_at').defaultNow(),
@@ -221,3 +240,80 @@ export const signingKeys = pgTable('signing_keys', {
 }, (t) => [
   index('idx_signing_keys_status').on(t.status),
 ]);
+
+export const deviceCodes = pgTable('device_codes', {
+  id: text('id').primaryKey(),
+  deviceCode: text('device_code').notNull().unique(),
+  userCode: text('user_code').notNull(),
+  clientId: text('client_id').notNull(),
+  tenantId: text('tenant_id').notNull().default('default'),
+  scope: text('scope').default('openid'),
+  status: text('status').notNull().default('pending'), // pending | approved | denied | redeemed | expired
+  userId: text('user_id'),
+  nonce: text('nonce'),
+  interval: integer('interval').notNull().default(5),
+  lastPolledAt: timestamp('last_polled_at'),
+  pollCount: integer('poll_count').notNull().default(0),
+  expiresAt: timestamp('expires_at').notNull(),
+  approvedAt: timestamp('approved_at'),
+  createdAt: timestamp('created_at').defaultNow(),
+}, (t) => [
+  uniqueIndex('idx_device_codes_usercode_tenant').on(t.userCode, t.tenantId),
+  index('idx_device_codes_expires').on(t.expiresAt),
+]);
+
+export const oidcSessions = pgTable('oidc_sessions', {
+  id: text('id').primaryKey(),
+  sid: text('sid').notNull(),
+  browserSessionId: text('browser_session_id').notNull(),
+  userId: text('user_id').notNull().references(() => users.id),
+  clientId: text('client_id').notNull(),
+  tenantId: text('tenant_id').notNull().default('default'),
+  scope: text('scope'),
+  authTime: timestamp('auth_time').notNull().defaultNow(),
+  lastRefreshedAt: timestamp('last_refreshed_at').defaultNow(),
+  terminatedAt: timestamp('terminated_at'),
+  createdAt: timestamp('created_at').defaultNow(),
+}, (t) => [
+  uniqueIndex('idx_oidc_sessions_sid_tenant').on(t.sid, t.tenantId),
+  index('idx_oidc_sessions_browser').on(t.browserSessionId),
+  index('idx_oidc_sessions_user_client').on(t.userId, t.clientId),
+]);
+
+export const backchannelLogoutDeliveries = pgTable('backchannel_logout_deliveries', {
+  id: text('id').primaryKey(),
+  oidcSessionId: text('oidc_session_id').notNull(),
+  clientId: text('client_id').notNull(),
+  url: text('url').notNull(),
+  attempts: integer('attempts').notNull().default(0),
+  nextAttemptAt: timestamp('next_attempt_at').notNull().defaultNow(),
+  status: text('status').notNull().default('pending'), // pending | delivered | failed
+  lastError: text('last_error'),
+  createdAt: timestamp('created_at').defaultNow(),
+}, (t) => [
+  index('idx_backchannel_deliveries_status').on(t.status, t.nextAttemptAt),
+]);
+
+export const clientAssertionJtis = pgTable('client_assertion_jtis', {
+  jti: text('jti').primaryKey(),
+  clientId: text('client_id').notNull(),
+  expiresAt: timestamp('expires_at').notNull(),
+});
+
+export const pushedAuthRequests = pgTable('pushed_auth_requests', {
+  requestUri: text('request_uri').primaryKey(),
+  clientId: text('client_id').notNull(),
+  tenantId: text('tenant_id').notNull().default('default'),
+  payload: text('payload').notNull(), // JSON-encoded authorize params
+  expiresAt: timestamp('expires_at').notNull(),
+  usedAt: timestamp('used_at'),
+  createdAt: timestamp('created_at').defaultNow(),
+}, (t) => [
+  index('idx_par_expires').on(t.expiresAt),
+]);
+
+export const dpopJtis = pgTable('dpop_jtis', {
+  jti: text('jti').primaryKey(),
+  jkt: text('jkt').notNull(), // base64url SHA-256 thumbprint of the DPoP public key
+  expiresAt: timestamp('expires_at').notNull(),
+});

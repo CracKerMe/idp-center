@@ -1,7 +1,8 @@
 import { db } from '../database.js';
-import { accessTokens, refreshTokens, authCodes, oauthStates, passwordResets, trustedDevices, signingKeys } from '../schema.js';
-import { and, eq, lt } from 'drizzle-orm';
+import { accessTokens, refreshTokens, authCodes, oauthStates, passwordResets, trustedDevices, signingKeys, deviceCodes, clientAssertionJtis, pushedAuthRequests, dpopJtis } from '../schema.js';
+import { and, eq, lt, or } from 'drizzle-orm';
 import { rotateSigningKeyIfDue } from '../services/keys.service.js';
+import { drainBackchannelQueue } from '../services/backchannel-logout.service.js';
 
 export interface CleanupResult {
   accessTokens: number;
@@ -11,6 +12,11 @@ export interface CleanupResult {
   passwordResets: number;
   trustedDevices: number;
   signingKeys: number;
+  deviceCodes: number;
+  clientAssertionJtis: number;
+  pushedAuthRequests: number;
+  dpopJtis: number;
+  backchannelLogoutsDelivered: number;
 }
 
 export async function cleanupExpiredTokens(): Promise<CleanupResult> {
@@ -23,8 +29,13 @@ export async function cleanupExpiredTokens(): Promise<CleanupResult> {
   const prResult = await db.delete(passwordResets).where(and(lt(passwordResets.expiresAt, now), eq(passwordResets.used, true)));
   const tdResult = await db.delete(trustedDevices).where(lt(trustedDevices.expiresAt, now));
   const skResult = await db.delete(signingKeys).where(and(eq(signingKeys.status, 'retired'), lt(signingKeys.expiresAt, now)));
+  const dcResult = await db.delete(deviceCodes).where(or(lt(deviceCodes.expiresAt, now), eq(deviceCodes.status, 'redeemed')));
+  const cajResult = await db.delete(clientAssertionJtis).where(lt(clientAssertionJtis.expiresAt, now));
+  const parResult = await db.delete(pushedAuthRequests).where(lt(pushedAuthRequests.expiresAt, now));
+  const dpopResult = await db.delete(dpopJtis).where(lt(dpopJtis.expiresAt, now));
 
   await rotateSigningKeyIfDue();
+  const backchannelLogoutsDelivered = await drainBackchannelQueue();
 
   return {
     accessTokens: Number((atResult as any).rowCount),
@@ -34,5 +45,10 @@ export async function cleanupExpiredTokens(): Promise<CleanupResult> {
     passwordResets: Number((prResult as any).rowCount),
     trustedDevices: Number((tdResult as any).rowCount),
     signingKeys: Number((skResult as any).rowCount),
+    deviceCodes: Number((dcResult as any).rowCount),
+    clientAssertionJtis: Number((cajResult as any).rowCount),
+    pushedAuthRequests: Number((parResult as any).rowCount),
+    dpopJtis: Number((dpopResult as any).rowCount),
+    backchannelLogoutsDelivered,
   };
 }

@@ -7,6 +7,8 @@ import type { JwtUserPayload } from '../types/index.js';
 import '../types/express-augment.js';
 import { users } from '../schema.js';
 import { eq } from 'drizzle-orm';
+import { verifyDpopProof } from '../oauth/dpop.js';
+import { OAuthError } from '../oauth/errors.js';
 
 export async function authenticateToken(
   req: express.Request,
@@ -24,6 +26,28 @@ export async function authenticateToken(
       decoded = await verifyInternalJwt(token);
     } catch {
       return res.status(401).json(error('Invalid token', ErrorCode.TOKEN_INVALID));
+    }
+
+    // RFC 9449: a token issued with cnf.jkt is DPoP-bound and must never be
+    // usable as a plain Bearer token — this branch is unreachable for every
+    // token issued before DPoP support existed, since none of them carry cnf.
+    const cnf = (decoded as any).cnf;
+    if (cnf?.jkt) {
+      try {
+        const presentedJkt = await verifyDpopProof(req, { expectedAth: token });
+        if (presentedJkt !== cnf.jkt) {
+          return res.status(401).json(error('DPoP proof key does not match token binding', ErrorCode.TOKEN_INVALID));
+        }
+      } catch (err) {
+        const description = err instanceof OAuthError ? err.error_description : undefined;
+        return res.status(401).json(error(description || 'DPoP proof required', ErrorCode.TOKEN_INVALID));
+      }
+    }
+
+    if (decoded.sub_type === 'client') {
+      // Machine tokens (client_credentials grant) have no user identity and
+      // must never reach user-facing routes.
+      return res.status(401).json(error('Machine tokens cannot access user routes', ErrorCode.TOKEN_INVALID));
     }
 
     if (typeof decoded.id !== 'string' || typeof decoded.username !== 'string') {

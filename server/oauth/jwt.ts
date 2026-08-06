@@ -40,12 +40,19 @@ export async function signLogoutToken(claims: Record<string, unknown>): Promise<
  * Verifies either an HS256 (legacy) or RS256 (current) internally-issued JWT.
  * Never falls back across algorithm families — an unknown RS256 kid is rejected outright,
  * not retried as HMAC (that would be an alg-confusion vulnerability).
+ *
+ * `ignoreExpiration` exists solely for RP-initiated logout's id_token_hint: that
+ * token is expected to be expired by the time the user logs out, but its
+ * signature still needs checking to trust the sub/sid it carries.
  */
-export async function verifyInternalJwt(token: string): Promise<jose.JWTPayload> {
+export async function verifyInternalJwt(token: string, opts?: { ignoreExpiration?: boolean }): Promise<jose.JWTPayload> {
   const header = jose.decodeProtectedHeader(token);
+  // A huge clockTolerance is jose's supported way to skip exp/nbf enforcement
+  // without hand-rolling verification — the signature check is unaffected.
+  const verifyOpts = opts?.ignoreExpiration ? { clockTolerance: 100 * 365 * 24 * 60 * 60 } : {};
 
   if (header.alg === 'HS256') {
-    const { payload } = await jose.jwtVerify(token, hmacSecret(), { algorithms: ['HS256'] });
+    const { payload } = await jose.jwtVerify(token, hmacSecret(), { algorithms: ['HS256'], ...verifyOpts });
     return payload;
   }
 
@@ -53,7 +60,7 @@ export async function verifyInternalJwt(token: string): Promise<jose.JWTPayload>
     if (!header.kid) throw new Error('RS256 token missing kid');
     const key = await getVerificationKey(header.kid);
     if (!key) throw new Error(`Unknown signing key: ${header.kid}`);
-    const { payload } = await jose.jwtVerify(token, key, { algorithms: ['RS256'] });
+    const { payload } = await jose.jwtVerify(token, key, { algorithms: ['RS256'], ...verifyOpts });
     return payload;
   }
 
