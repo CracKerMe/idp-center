@@ -7,6 +7,7 @@ import { validate } from '../middleware/validate.js';
 import { commonSchemas } from '../middleware/validate.js';
 import { success, error, message, ErrorCode } from '../utils/response.js';
 import { logAudit } from '../utils/audit.js';
+import { AuditAction } from '../utils/audit-actions.js';
 import { users, mfaFactors } from '../schema.js';
 import { eq, and } from 'drizzle-orm';
 import * as mfaService from '../services/mfa.service.js';
@@ -34,7 +35,7 @@ router.post('/totp/verify', authenticateToken, validate({ body: z.object({ facto
   if (!ok) return res.status(400).json(error('Invalid code', ErrorCode.AUTH_OTP_INVALID));
 
   const tenantId = req.tenantId || req.user!.tenant_id || 'default';
-  await logAudit(req.user!.id, 'MFA_FACTOR_ENABLED', req, 'type=totp', tenantId);
+  await logAudit({ req, action: AuditAction.MFA_FACTOR_ENABLED, userId: req.user!.id, details: 'type=totp', tenantId: tenantId });
   res.json(success({ enabled: true }, 'TOTP enabled successfully'));
 });
 
@@ -53,7 +54,7 @@ router.post('/email/verify', authenticateToken, validate({ body: z.object({ fact
   if (!ok) return res.status(400).json(error('Invalid or expired code', ErrorCode.AUTH_OTP_INVALID));
 
   const tenantId = req.tenantId || req.user!.tenant_id || 'default';
-  await logAudit(req.user!.id, 'MFA_FACTOR_ENABLED', req, 'type=email', tenantId);
+  await logAudit({ req, action: AuditAction.MFA_FACTOR_ENABLED, userId: req.user!.id, details: 'type=email', tenantId: tenantId });
   res.json(success({ enabled: true }, 'Email factor enabled successfully'));
 });
 
@@ -71,7 +72,7 @@ router.post('/sms/verify', authenticateToken, validate({ body: z.object({ factor
   if (!ok) return res.status(400).json(error('Invalid or expired code', ErrorCode.AUTH_OTP_INVALID));
 
   const tenantId = req.tenantId || req.user!.tenant_id || 'default';
-  await logAudit(req.user!.id, 'MFA_FACTOR_ENABLED', req, 'type=sms', tenantId);
+  await logAudit({ req, action: AuditAction.MFA_FACTOR_ENABLED, userId: req.user!.id, details: 'type=sms', tenantId: tenantId });
   res.json(success({ enabled: true }, 'SMS factor enabled successfully'));
 });
 
@@ -93,7 +94,7 @@ router.post('/webauthn/register/verify', authenticateToken, validate({ body: z.o
   }
 
   const tenantId = req.tenantId || req.user!.tenant_id || 'default';
-  await logAudit(req.user!.id, 'MFA_FACTOR_ENABLED', req, 'type=webauthn', tenantId);
+  await logAudit({ req, action: AuditAction.MFA_FACTOR_ENABLED, userId: req.user!.id, details: 'type=webauthn', tenantId: tenantId });
   res.json(success({ enabled: true }, 'Security key registered successfully'));
 });
 
@@ -107,7 +108,7 @@ router.post('/recovery/generate', authenticateToken, async (req, res) => {
 
   const codes = await mfaService.generateRecoveryCodes(req.user!.id);
   const tenantId = req.tenantId || req.user!.tenant_id || 'default';
-  await logAudit(req.user!.id, 'MFA_RECOVERY_CODES_GENERATED', req, `count=${codes.length}`, tenantId);
+  await logAudit({ req, action: AuditAction.MFA_RECOVERY_CODES_GENERATED, userId: req.user!.id, details: `count=${codes.length}`, tenantId: tenantId });
   res.json(success({ codes }, 'Store these codes somewhere safe — they will not be shown again'));
 });
 
@@ -124,7 +125,7 @@ router.delete('/factors/:id', authenticateToken, validate({ params: z.object({ i
   if (!ok) return res.status(404).json(error('Factor not found', ErrorCode.RESOURCE_NOT_FOUND));
 
   const tenantId = req.tenantId || req.user!.tenant_id || 'default';
-  await logAudit(req.user!.id, 'MFA_FACTOR_DISABLED', req, `type=${factor?.type}`, tenantId);
+  await logAudit({ req, action: AuditAction.MFA_FACTOR_DISABLED, userId: req.user!.id, details: `type=${factor?.type}`, tenantId: tenantId });
   res.json(message('MFA factor disabled'));
 });
 

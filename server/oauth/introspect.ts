@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import { authenticateClient } from './client-auth.js';
 import { resolveToken } from './token-lookup.js';
 import { OAuthError, sendOAuthError } from './errors.js';
+import { tokenIntrospect } from '../utils/metrics.js';
 
 /** RFC 7662 token introspection. */
 export async function handleIntrospect(req: Request, res: Response): Promise<void> {
@@ -15,6 +16,7 @@ export async function handleIntrospect(req: Request, res: Response): Promise<voi
     const resolved = await resolveToken(token, client.tenantId, hint);
 
     if (!resolved) {
+      tokenIntrospect.inc({ active: 'false', tenant_id: client.tenantId });
       res.json({ active: false });
       return;
     }
@@ -24,14 +26,18 @@ export async function handleIntrospect(req: Request, res: Response): Promise<voi
     const owned = resolved.row.clientId === client.clientId;
     const canIntrospectAny = client.row.isResourceServer === true;
     if (!owned && !canIntrospectAny) {
+      tokenIntrospect.inc({ active: 'false', tenant_id: client.tenantId });
       res.json({ active: false });
       return;
     }
 
     if (resolved.row.revoked || resolved.row.expiresAt < new Date()) {
+      tokenIntrospect.inc({ active: 'false', tenant_id: client.tenantId });
       res.json({ active: false });
       return;
     }
+
+    tokenIntrospect.inc({ active: 'true', tenant_id: client.tenantId });
 
     if (resolved.kind === 'access') {
       const row = resolved.row;

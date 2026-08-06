@@ -2,6 +2,7 @@ import express from 'express';
 import { db } from '../database.js';
 import { error, ErrorCode } from '../utils/response.js';
 import { logAudit } from '../utils/audit.js';
+import { AuditAction } from '../utils/audit-actions.js';
 import { tenantIpWhitelist } from '../schema.js';
 import { eq } from 'drizzle-orm';
 
@@ -147,17 +148,11 @@ export async function ipWhitelistGuard(
       return;
     }
 
-    await logAudit(
-      null,
-      'IP_BLOCKED',
-      req,
-      JSON.stringify({
+    await logAudit({ req, action: AuditAction.IP_BLOCKED, details: JSON.stringify({
         blocked_ip: clientIp,
         tenant_id: tenantId,
         path: req.path,
-      }),
-      tenantId
-    );
+      }), tenantId: tenantId });
 
     res.status(403).json(error('Access denied: IP not whitelisted', ErrorCode.IP_NOT_WHITELISTED));
   } catch (err) {

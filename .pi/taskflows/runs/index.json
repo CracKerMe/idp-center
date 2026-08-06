@@ -1,0 +1,13 @@
+[
+  {
+    "runId": "idp-phase12-review-msho3p7j-e348c2",
+    "flowName": "idp-phase12-review",
+    "cwd": "/Users/promisex/Desktop/其他项目/idp-center",
+    "status": "failed",
+    "createdAt": 1786029923936,
+    "updatedAt": 1786029924122,
+    "relPath": "idp-phase12-review/idp-phase12-review-msho3p7j-e348c2.json",
+    "host": "pi",
+    "packageVersion": "0.2.6"
+  }
+]

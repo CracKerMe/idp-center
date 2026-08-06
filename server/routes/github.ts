@@ -1,13 +1,14 @@
 import express from 'express';
 import crypto from 'crypto';
-import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { db } from '../database.js';
 import { config } from '../config.js';
 import { logAudit } from '../utils/audit.js';
-import { encryptToken, generateOAuthState } from '../services/crypto.js';
+import { AuditAction } from '../utils/audit-actions.js';
+import { generateOAuthState } from '../services/crypto.js';
+import { findOrLinkUser } from '../services/identity-link.service.js';
 import { success, error, ErrorCode } from '../utils/response.js';
-import { users, linkedAccounts, oauthStates, accessTokens, sessions, refreshTokens, authCodes } from '../schema.js';
+import { users, oauthStates, accessTokens, sessions, refreshTokens, authCodes } from '../schema.js';
 import { eq, and, lt, desc } from 'drizzle-orm';
 
 const router = express.Router();
@@ -71,94 +72,17 @@ async function getGitHubEmails(accessToken: string): Promise<string | null> {
   return primary ? primary.email : null;
 }
 
-async function findOrCreateUserFromGitHub(identity: GitHubIdentity, accessToken: string): Promise<any> {
-  const providerUserId = String(identity.id);
-  const encryptedToken = encryptToken(accessToken);
-  const now = new Date().toISOString();
-
-  const [existingLink] = await db
-    .select({
-      userId: linkedAccounts.userId,
-      username: users.username,
-      email: users.email,
-      id: users.id,
-      passwordHash: users.passwordHash,
-      tenantId: users.tenantId,
-      isActive: users.isActive,
-      isAdmin: users.isAdmin,
-      otpSecret: users.otpSecret,
-      otpEnabled: users.otpEnabled,
-      createdAt: users.createdAt,
-      updatedAt: users.updatedAt,
-      fullName: users.fullName,
-      avatarUrl: users.avatarUrl,
-      phone: users.phone,
-    })
-    .from(linkedAccounts)
-    .innerJoin(users, eq(linkedAccounts.userId, users.id))
-    .where(and(eq(linkedAccounts.provider, 'github'), eq(linkedAccounts.providerUserId, providerUserId)))
-    .limit(1);
-
-  if (existingLink) {
-    await db
-      .update(linkedAccounts)
-      .set({ providerUsername: identity.login, accessToken: encryptedToken, updatedAt: new Date(now) })
-      .where(and(eq(linkedAccounts.provider, 'github'), eq(linkedAccounts.providerUserId, providerUserId)));
-
-    const [updatedUser] = await db.select().from(users).where(eq(users.id, existingLink.userId)).limit(1);
-    return updatedUser;
-  }
-
-  if (identity.email) {
-    const [userByEmail] = await db.select().from(users).where(eq(users.email, identity.email)).limit(1);
-    if (userByEmail) {
-      await db.insert(linkedAccounts).values({
-        id: crypto.randomUUID(),
-        userId: userByEmail.id,
-        provider: 'github',
-        providerUserId,
-        providerUsername: identity.login,
-        accessToken: encryptedToken,
-        createdAt: new Date(now),
-        updatedAt: new Date(now),
-      });
-      return userByEmail;
-    }
-  }
-
-  let username = identity.login;
-  const [usernameConflict] = await db.select({ id: users.id }).from(users).where(eq(users.username, username)).limit(1);
-  if (usernameConflict) {
-    username = `${username}_${crypto.randomBytes(2).toString('hex')}`;
-  }
-
-  const placeholderPasswordHash = bcrypt.hashSync('', 10);
-  const newUserId = crypto.randomUUID();
-
-  await db.insert(users).values({
-    id: newUserId,
-    username,
-    email: identity.email ?? '',
-    passwordHash: placeholderPasswordHash,
-    isActive: true,
-    isAdmin: false,
-    createdAt: new Date(now),
-    updatedAt: new Date(now),
+async function findOrCreateUserFromGitHub(tenantId: string, identity: GitHubIdentity, accessToken: string) {
+  return findOrLinkUser(tenantId, 'github', String(identity.id), {
+    email: identity.email,
+    emailVerified: !!identity.email, // getGitHubEmails() only ever returns a verified primary address
+    username: identity.login,
+    displayName: identity.name,
+    avatarUrl: identity.avatar_url,
+  }, {
+    linkByVerifiedEmail: true,
+    providerAccessToken: accessToken,
   });
-
-  await db.insert(linkedAccounts).values({
-    id: crypto.randomUUID(),
-    userId: newUserId,
-    provider: 'github',
-    providerUserId,
-    providerUsername: identity.login,
-    accessToken: encryptedToken,
-    createdAt: new Date(now),
-    updatedAt: new Date(now),
-  });
-
-  const [newUser] = await db.select().from(users).where(eq(users.id, newUserId)).limit(1);
-  return newUser;
 }
 
 // GET /api/auth/github/config
@@ -182,7 +106,9 @@ router.get('/', async (req, res) => {
 
   const state = generateOAuthState();
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-  await db.insert(oauthStates).values({ state, expiresAt });
+  // GitHub's callback URL is fixed and carries none of our own query params, so the
+  // tenant this login started from has to round-trip through the state row instead.
+  await db.insert(oauthStates).values({ state, expiresAt, provider: 'github', payload: JSON.stringify({ tenantId: req.tenantId }) });
 
   const authUrl = new URL('https://github.com/login/oauth/authorize');
   authUrl.searchParams.set('client_id', clientId);
@@ -203,12 +129,12 @@ router.get('/callback', async (req, res) => {
 
   if (githubError) {
     const errorDesc = githubError === 'access_denied' ? 'GitHub authorization was cancelled' : githubError;
-    await logAudit(null, 'GITHUB_LOGIN_FAILED', req, `GitHub error: ${githubError}`);
+    await logAudit({ req, action: AuditAction.GITHUB_LOGIN_FAILED, details: `GitHub error: ${githubError}` });
     return res.redirect(302, `/#/login?error=${encodeURIComponent(errorDesc)}`);
   }
 
   const [stateRecord] = await db
-    .select({ state: oauthStates.state, expiresAt: oauthStates.expiresAt })
+    .select({ state: oauthStates.state, expiresAt: oauthStates.expiresAt, payload: oauthStates.payload })
     .from(oauthStates)
     .where(eq(oauthStates.state, state))
     .limit(1);
@@ -220,11 +146,15 @@ router.get('/callback', async (req, res) => {
 
   await db.delete(oauthStates).where(eq(oauthStates.state, state));
 
+  const tenantId: string = (() => {
+    try { return JSON.parse(stateRecord.payload || '{}').tenantId || 'default'; } catch { return 'default'; }
+  })();
+
   let githubAccessToken: string;
   try {
     githubAccessToken = await exchangeGitHubCode(code);
   } catch (err: any) {
-    await logAudit(null, 'GITHUB_LOGIN_FAILED', req, `Token exchange failed: ${err.message}`);
+    await logAudit({ req, action: AuditAction.GITHUB_LOGIN_FAILED, details: `Token exchange failed: ${err.message}` });
     return res.redirect(302, `/#/login?error=${encodeURIComponent('Failed to exchange GitHub authorization code')}`);
   }
 
@@ -234,15 +164,15 @@ router.get('/callback', async (req, res) => {
     const verifiedEmail = await getGitHubEmails(githubAccessToken);
     if (verifiedEmail) identity = { ...identity, email: verifiedEmail };
   } catch (err: any) {
-    await logAudit(null, 'GITHUB_LOGIN_FAILED', req, `GitHub user info failed: ${err.message}`);
+    await logAudit({ req, action: AuditAction.GITHUB_LOGIN_FAILED, details: `GitHub user info failed: ${err.message}` });
     return res.redirect(302, `/#/login?error=${encodeURIComponent('Failed to retrieve GitHub user information')}`);
   }
 
   let user: any;
   try {
-    user = await findOrCreateUserFromGitHub(identity, githubAccessToken);
+    user = await findOrCreateUserFromGitHub(tenantId, identity, githubAccessToken);
   } catch (err: any) {
-    await logAudit(null, 'GITHUB_LOGIN_FAILED', req, `Account linking failed: ${err.message}`);
+    await logAudit({ req, action: AuditAction.GITHUB_LOGIN_FAILED, details: `Account linking failed: ${err.message}` });
     return res.redirect(302, `/#/login?error=${encodeURIComponent('Failed to complete GitHub login')}`);
   }
 
@@ -257,6 +187,7 @@ router.get('/callback', async (req, res) => {
     token: accessToken,
     clientId: 'system',
     userId: user.id,
+    tenantId: user.tenantId || 'default',
     expiresAt: accessExpiresAt,
   });
 
@@ -281,7 +212,7 @@ router.get('/callback', async (req, res) => {
     expiresAt: refreshExpiresAt,
   });
 
-  await logAudit(user.id, 'GITHUB_LOGIN_SUCCESS', req, `GitHub username: ${identity.login}`);
+  await logAudit({ req, action: AuditAction.GITHUB_LOGIN_SUCCESS, userId: user.id, details: `GitHub username: ${identity.login}` });
 
   const exchangeCode = crypto.randomBytes(32).toString('hex');
   const exchangeExpiresAt = new Date(Date.now() + 60 * 1000);

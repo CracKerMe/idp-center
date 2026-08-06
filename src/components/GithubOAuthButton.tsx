@@ -29,6 +29,12 @@ export function GithubOAuthButton({ redirect }: GithubOAuthButtonProps) {
     localStorage.setItem('github_post_login_redirect', safeRedirect);
   };
 
+  // Plain <a> navigation can't carry the X-Tenant-ID header the rest of the app uses —
+  // fall back to the tenant_id query param, which tenantContext also accepts, so GitHub
+  // login lands the user in the same tenant the login page itself is scoped to.
+  const tenantId = typeof window !== 'undefined' ? localStorage.getItem('tenant_id') : null;
+  const githubHref = tenantId ? `/api/auth/github?tenant_id=${encodeURIComponent(tenantId)}` : '/api/auth/github';
+
   return (
     <div className="mt-6">
       <div className="relative">
@@ -44,7 +50,7 @@ export function GithubOAuthButton({ redirect }: GithubOAuthButtonProps) {
 
       <div className="mt-4">
         <a
-          href="/api/auth/github"
+          href={githubHref}
           onClick={handleClick}
           data-testid="github-login-button"
           className="w-full flex justify-center items-center gap-2 py-2 px-4 border border-zinc-300 dark:border-zinc-700 rounded-md shadow-sm text-sm font-medium text-zinc-700 dark:text-zinc-300 bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"

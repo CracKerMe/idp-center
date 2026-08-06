@@ -9,6 +9,7 @@ import { users } from '../schema.js';
 import { eq } from 'drizzle-orm';
 import { verifyDpopProof } from '../oauth/dpop.js';
 import { OAuthError } from '../oauth/errors.js';
+import { userHasPermission, permissionCodesSatisfy } from '../services/rbac.service.js';
 
 export async function authenticateToken(
   req: express.Request,
@@ -74,13 +75,71 @@ export async function authenticateToken(
   }
 }
 
-export function authenticateAdmin(
+/**
+ * Tenant-scoped admin check. `is_admin` (legacy) and `is_platform_admin` both short-circuit;
+ * everyone else needs an 'admin:*' permission grant scoped to req.tenantId via roles/groups.
+ * Always re-reads from the DB rather than trusting the JWT's `is_admin` claim, so a demoted
+ * admin loses access immediately instead of waiting for their access token to expire.
+ */
+export async function authenticateAdmin(
   req: express.Request,
   res: express.Response,
   next: express.NextFunction
 ) {
-  authenticateToken(req, res, () => {
-    if (!req.user?.is_admin) return res.status(403).json(error('Admin access required', ErrorCode.AUTH_UNAUTHORIZED));
-    next();
+  authenticateToken(req, res, async () => {
+    try {
+      const [dbUser] = await db.select({ isAdmin: users.isAdmin, isPlatformAdmin: users.isPlatformAdmin }).from(users).where(eq(users.id, req.user!.id)).limit(1);
+      req.isPlatformAdmin = dbUser?.isPlatformAdmin ?? false;
+      if (dbUser?.isPlatformAdmin || dbUser?.isAdmin) return next();
+
+      const tenantId = req.tenantId || req.user!.tenant_id || 'default';
+      const allowed = await userHasPermission(req.user!.id, tenantId, 'admin:*');
+      if (allowed) return next();
+
+      return res.status(403).json(error('Admin access required', ErrorCode.AUTH_UNAUTHORIZED));
+    } catch (err) {
+      next(err);
+    }
   });
+}
+
+/** Cross-tenant operations (tenant CRUD, global stats, global maintenance) — is_platform_admin only. */
+export async function authenticatePlatformAdmin(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction
+) {
+  authenticateToken(req, res, async () => {
+    try {
+      const [dbUser] = await db.select({ isPlatformAdmin: users.isPlatformAdmin }).from(users).where(eq(users.id, req.user!.id)).limit(1);
+      if (!dbUser?.isPlatformAdmin) {
+        return res.status(403).json(error('Platform admin access required', ErrorCode.AUTH_UNAUTHORIZED));
+      }
+      req.isPlatformAdmin = true;
+      next();
+    } catch (err) {
+      next(err);
+    }
+  });
+}
+
+/** Fine-grained RBAC gate for a specific permission code, scoped to req.tenantId. */
+export function requirePermission(code: string) {
+  return async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    authenticateToken(req, res, async () => {
+      try {
+        const [dbUser] = await db.select({ isAdmin: users.isAdmin, isPlatformAdmin: users.isPlatformAdmin }).from(users).where(eq(users.id, req.user!.id)).limit(1);
+        if (dbUser?.isPlatformAdmin) return next();
+        if (dbUser?.isAdmin && permissionCodesSatisfy(['admin:*'], code)) return next();
+
+        const tenantId = req.tenantId || req.user!.tenant_id || 'default';
+        const allowed = await userHasPermission(req.user!.id, tenantId, code);
+        if (allowed) return next();
+
+        return res.status(403).json(error('Forbidden', ErrorCode.AUTH_UNAUTHORIZED));
+      } catch (err) {
+        next(err);
+      }
+    });
+  };
 }

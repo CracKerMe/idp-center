@@ -6,6 +6,7 @@ import path from 'path';
 import { db } from '../database.js';
 import { config, rootDir } from '../config.js';
 import { logAudit } from '../utils/audit.js';
+import { AuditAction } from '../utils/audit-actions.js';
 import { validatePassword, recordPasswordHistory } from '../services/password-policy.service.js';
 import { emailService } from '../services/email.service.js';
 import { authenticateToken } from '../middleware/auth.js';
@@ -27,6 +28,10 @@ import {
   trustedDevices,
   linkedAccounts,
   accountDeletionRequests,
+  mfaFactors,
+  auditLogs,
+  userRoles,
+  roles,
 } from '../schema.js';
 import { eq, and, gt, desc, sql } from 'drizzle-orm';
 
@@ -98,7 +103,7 @@ router.put('/profile', authenticateToken, validate({ body: updateProfileSchema }
     updatedAt: new Date(),
   }).where(eq(users.id, userId));
 
-  await logAudit(userId, 'PROFILE_UPDATE', req, `Updated profile: full_name=${full_name}, phone=${phone}`);
+  await logAudit({ req, action: AuditAction.PROFILE_UPDATE, userId: userId, details: `Updated profile: full_name=${full_name}, phone=${phone}` });
   res.json(message('Profile updated successfully'));
 });
 
@@ -113,7 +118,7 @@ router.put('/password', authenticateToken, validate({ body: changePasswordSchema
   }
 
   if (!await bcrypt.compare(current_password, user.passwordHash)) {
-    await logAudit(userId, 'PASSWORD_CHANGE_FAILED', req, 'Incorrect current password');
+    await logAudit({ req, action: AuditAction.PASSWORD_CHANGE_FAILED, userId: userId, details: 'Incorrect current password' });
     return res.status(401).json(error('Current password is incorrect', ErrorCode.AUTH_INVALID_CREDENTIALS));
   }
 
@@ -143,7 +148,7 @@ router.put('/password', authenticateToken, validate({ body: changePasswordSchema
   }
   await db.update(refreshTokens).set({ revoked: true }).where(eq(refreshTokens.userId, userId));
 
-  await logAudit(userId, 'PASSWORD_CHANGE_SUCCESS', req, 'Password changed successfully');
+  await logAudit({ req, action: AuditAction.PASSWORD_CHANGE_SUCCESS, userId: userId, details: 'Password changed successfully' });
   res.json(message('Password changed successfully'));
 });
 
@@ -174,7 +179,7 @@ router.delete('/sessions/:sessionId', authenticateToken, validate({ params: sess
   if (!session) return res.status(404).json(error('Session not found', ErrorCode.RESOURCE_NOT_FOUND));
 
   await db.delete(sessions).where(eq(sessions.id, sessionId));
-  await logAudit(userId, 'SESSION_REVOKED', req, `Session ${sessionId} revoked remotely`);
+  await logAudit({ req, action: AuditAction.SESSION_REVOKED, userId: userId, details: `Session ${sessionId} revoked remotely` });
   res.json(message('Session revoked successfully'));
 });
 
@@ -201,7 +206,7 @@ router.delete('/trusted-devices/:deviceId', authenticateToken, validate({ params
   if (!device) return res.status(404).json(error('Device not found', ErrorCode.RESOURCE_NOT_FOUND));
 
   await db.delete(trustedDevices).where(and(eq(trustedDevices.id, deviceId), eq(trustedDevices.userId, userId)));
-  await logAudit(userId, 'TRUSTED_DEVICE_REVOKED', req, `Trusted device ${deviceId} revoked`);
+  await logAudit({ req, action: AuditAction.TRUSTED_DEVICE_REVOKED, userId: userId, details: `Trusted device ${deviceId} revoked` });
   res.json(message('Trusted device removed successfully'));
 });
 
@@ -241,7 +246,7 @@ router.post('/account/delete-request', authenticateToken, async (req, res) => {
     console.error('Failed to send account deletion confirmation email:', err);
   });
 
-  await logAudit(userId, 'ACCOUNT_DELETION_REQUESTED', req, `Scheduled for ${scheduledDeleteAt.toISOString()}`);
+  await logAudit({ req, action: AuditAction.ACCOUNT_DELETION_REQUESTED, userId: userId, details: `Scheduled for ${scheduledDeleteAt.toISOString()}` });
   res.json(success({
     scheduled_delete_at: scheduledDeleteAt.toISOString(),
     request: { id, user_id: userId, status: 'pending', requested_at: requestedAt.toISOString(), scheduled_delete_at: scheduledDeleteAt.toISOString() },
@@ -261,7 +266,7 @@ router.delete('/account/delete-request', authenticateToken, async (req, res) => 
     cancelledAt,
   }).where(eq(accountDeletionRequests.id, pending.id));
 
-  await logAudit(userId, 'ACCOUNT_DELETION_CANCELLED', req, `Request ${pending.id} cancelled`);
+  await logAudit({ req, action: AuditAction.ACCOUNT_DELETION_CANCELLED, userId: userId, details: `Request ${pending.id} cancelled` });
   res.json(message('Account deletion request cancelled'));
 });
 
@@ -297,7 +302,7 @@ router.post('/avatar', authenticateToken, (req, res) => {
       avatarUrl,
       updatedAt: new Date(),
     }).where(eq(users.id, userId)).then(() => {
-      logAudit(userId, 'AVATAR_UPLOADED', req, `Avatar updated: ${avatarUrl}`);
+      logAudit({ req, action: AuditAction.AVATAR_UPLOADED, userId: userId, details: `Avatar updated: ${avatarUrl}` });
       res.json(success({ avatar_url: avatarUrl }));
     });
   });
@@ -315,7 +320,7 @@ router.put('/avatar/url', authenticateToken, async (req, res) => {
     updatedAt: new Date(),
   }).where(eq(users.id, userId));
 
-  await logAudit(userId, 'AVATAR_URL_SET', req, `Avatar URL set to external URL`);
+  await logAudit({ req, action: AuditAction.AVATAR_URL_SET, userId: userId, details: `Avatar URL set to external URL` });
   res.json(success({ avatar_url: url }));
 });
 
@@ -328,8 +333,58 @@ router.delete('/avatar', authenticateToken, async (req, res) => {
     updatedAt: new Date(),
   }).where(eq(users.id, userId));
 
-  await logAudit(userId, 'AVATAR_DELETED', req, 'Avatar cleared');
+  await logAudit({ req, action: AuditAction.AVATAR_DELETED, userId: userId, details: 'Avatar cleared' });
   res.json(message('Avatar deleted successfully'));
+});
+
+// GET /api/user/data-export — GDPR Art. 20 (data portability) self-service export.
+// Bundles everything the app holds about the requesting user into one JSON document. No
+// secrets: password hashes, MFA secrets/private keys, and provider OAuth tokens are
+// deliberately excluded — this is "what data do you have on me", not a credential dump.
+router.get('/data-export', authenticateToken, async (req, res) => {
+  const userId = req.user!.id;
+
+  const [profile] = await db.select({
+    id: users.id, username: users.username, email: users.email, fullName: users.fullName,
+    phone: users.phone, avatarUrl: users.avatarUrl, tenantId: users.tenantId,
+    createdAt: users.createdAt, emailVerified: users.emailVerified,
+  }).from(users).where(eq(users.id, userId)).limit(1);
+
+  if (!profile) return res.status(404).json(error('User not found', ErrorCode.RESOURCE_NOT_FOUND));
+
+  const [sessionRows, deviceRows, linkedRows, mfaRows, roleRows, deletionRows, recentAudit] = await Promise.all([
+    db.select({ id: sessions.id, deviceInfo: sessions.deviceInfo, ipAddress: sessions.ipAddress, lastActive: sessions.lastActive, createdAt: sessions.createdAt })
+      .from(sessions).where(eq(sessions.userId, userId)),
+    db.select({ id: trustedDevices.id, deviceName: trustedDevices.deviceName, trustedAt: trustedDevices.trustedAt, expiresAt: trustedDevices.expiresAt, lastUsedAt: trustedDevices.lastUsedAt })
+      .from(trustedDevices).where(eq(trustedDevices.userId, userId)),
+    db.select({ provider: linkedAccounts.provider, providerUsername: linkedAccounts.providerUsername, createdAt: linkedAccounts.createdAt })
+      .from(linkedAccounts).where(eq(linkedAccounts.userId, userId)),
+    db.select({ id: mfaFactors.id, type: mfaFactors.type, name: mfaFactors.name, status: mfaFactors.status, createdAt: mfaFactors.createdAt, lastUsedAt: mfaFactors.lastUsedAt })
+      .from(mfaFactors).where(eq(mfaFactors.userId, userId)),
+    db.select({ roleName: roles.name }).from(userRoles).innerJoin(roles, eq(userRoles.roleId, roles.id)).where(eq(userRoles.userId, userId)),
+    db.select({ status: accountDeletionRequests.status, requestedAt: accountDeletionRequests.requestedAt, scheduledDeleteAt: accountDeletionRequests.scheduledDeleteAt })
+      .from(accountDeletionRequests).where(eq(accountDeletionRequests.userId, userId)),
+    db.select({ action: auditLogs.action, createdAt: auditLogs.createdAt, ipAddress: auditLogs.ipAddress, details: auditLogs.details })
+      .from(auditLogs).where(eq(auditLogs.userId, userId)).orderBy(desc(auditLogs.createdAt)).limit(500),
+  ]);
+
+  const exportBundle = {
+    exportedAt: new Date().toISOString(),
+    profile,
+    roles: roleRows.map(r => r.roleName),
+    sessions: sessionRows,
+    trustedDevices: deviceRows,
+    linkedAccounts: linkedRows,
+    mfaFactors: mfaRows,
+    accountDeletionRequests: deletionRows,
+    recentAuditActivity: recentAudit,
+  };
+
+  await logAudit({ req, action: AuditAction.DATA_EXPORT_REQUESTED, userId });
+
+  res.setHeader('Content-Disposition', `attachment; filename="data-export-${userId}.json"`);
+  res.setHeader('Content-Type', 'application/json');
+  res.json(exportBundle);
 });
 
 export { executeAccountDeletion };

@@ -65,7 +65,7 @@ export const refreshTokenGrant: GrantHandler = {
     }
 
     const { token: newAccessToken } = await issueAccessToken(user, client.clientId, scope, tenantId, undefined, undefined, authCtx);
-    const idToken = issueIdToken(user, { clientId: client.clientId, scope, ...authCtx });
+    const idToken = await issueIdToken(user, { clientId: client.clientId, scope, ...authCtx });
 
     return {
       access_token: newAccessToken,

@@ -14,12 +14,23 @@ import userRouter from './server/routes/user.js';
 import adminRouter from './server/routes/admin.js';
 import githubRouter from './server/routes/github.js';
 import mfaRouter from './server/routes/mfa.js';
+import scimRouter from './server/routes/scim.js';
+import federationRouter from './server/routes/federation/index.js';
+import healthRouter from './server/routes/health.js';
 import { sql } from 'drizzle-orm';
 
 import { tenantContext } from './server/middleware/tenant.js';
 import { ipWhitelistGuard } from './server/middleware/ip-whitelist.js';
+import { requestIdMiddleware } from './server/middleware/request-id.js';
+import { metricsMiddleware } from './server/middleware/metrics.js';
 
 export const app = express();
+
+// Request ID middleware - must be first to ensure all requests have an ID
+app.use(requestIdMiddleware);
+
+// Metrics collection middleware
+app.use(metricsMiddleware);
 
 // Security headers with helmet
 app.use(helmet({
@@ -45,25 +56,8 @@ app.use(helmet({
 
 app.use(express.json());
 
-// Health check
-app.get('/api/health', async (req, res) => {
-  try {
-    await db.execute(sql`SELECT 1`);
-    res.json({
-      status: 'healthy',
-      timestamp: new Date().toISOString(),
-      version: '1.0.0',
-      services: { database: 'ok' },
-    });
-  } catch {
-    res.json({
-      status: 'degraded',
-      timestamp: new Date().toISOString(),
-      version: '1.0.0',
-      services: { database: 'error' },
-    });
-  }
-});
+// Health & Metrics endpoints (before tenant context - these are global)
+app.use(healthRouter);
 
 app.use('/api', tenantContext);
 app.use('/api', ipWhitelistGuard);
@@ -82,7 +76,14 @@ app.use('/api/oidc', oidcRouter);
 app.use('/api/user', userRouter);
 app.use('/api/user/mfa', mfaRouter);
 app.use('/api/admin', adminRouter);
+// SAML's ACS endpoint receives an HTML form POST (application/x-www-form-urlencoded), not
+// JSON — the global express.json() above silently no-ops on that content type, so this
+// needs its own parser. GET routes here are unaffected (no body to parse).
+app.use('/api/federation', express.urlencoded({ extended: false }), federationRouter);
 app.use('/.well-known', wellKnownRouter);
+// SCIM is tenant-scoped via its bearer token's tenant_id, not X-Tenant-ID — mounted
+// outside /api so it doesn't go through tenantContext's header-based resolution.
+app.use('/scim/v2', express.json({ type: ['application/json', 'application/scim+json'] }), scimRouter);
 
 export async function startServer() {
   await initDatabase();

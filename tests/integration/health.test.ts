@@ -13,12 +13,30 @@ describe.skipIf(skipIfNoDb)('Health API Integration', () => {
     await initDatabase();
   });
 
-  it('returns 200 and healthy status', async () => {
-    const response = await request(app).get('/api/health');
+  it('returns 200 and healthy status on /health (legacy)', async () => {
+    const response = await request(app).get('/health');
 
     expect(response.status).toBe(200);
     expect(response.body).toHaveProperty('status', 'healthy');
     expect(response.body.services).toHaveProperty('database', 'ok');
+  });
+
+  it('returns 200 on /livez', async () => {
+    const response = await request(app).get('/livez');
+
+    expect(response.status).toBe(200);
+    expect(response.body).toHaveProperty('status', 'healthy');
+    expect(response.body).toHaveProperty('version');
+    expect(response.body).toHaveProperty('uptime');
+  });
+
+  it('returns 200 on /readyz when database is healthy', async () => {
+    const response = await request(app).get('/readyz');
+
+    expect(response.status).toBe(200);
+    expect(response.body).toHaveProperty('status', 'healthy');
+    expect(response.body.services).toHaveProperty('database');
+    expect(response.body.services.database).toHaveProperty('status', 'ok');
   });
 
   it('returns 404 for unknown routes', async () => {

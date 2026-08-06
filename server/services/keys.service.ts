@@ -4,6 +4,7 @@ import { eq, and, gt, or, isNull, sql } from 'drizzle-orm';
 import { db } from '../database.js';
 import { signingKeys } from '../schema.js';
 import { encryptToken, decryptToken } from './crypto.js';
+import { signingKeyRotations, jwksRequests } from '../utils/metrics.js';
 
 // Arbitrary fixed key for pg_advisory_xact_lock — serializes concurrent
 // ensureKeysInitialized() callers (e.g. parallel test-file boots) so we never
@@ -178,6 +179,8 @@ export async function rotateKeys(opts?: { retireGraceMs?: number }): Promise<{ n
 
   await insertKeyRow('next');
   clearKeyCache();
+
+  signingKeyRotations.inc({ outcome: 'success' });
 
   return { newKid: next.kid, retiredKid };
 }

@@ -7,6 +7,7 @@ import { db } from '../database.js';
 import { config, SECURITY_CONFIG, TOKEN_CONFIG, MFA_CONFIG } from '../config.js';
 import { emailService } from '../services/email.service.js';
 import { logAudit } from '../utils/audit.js';
+import { AuditAction } from '../utils/audit-actions.js';
 import { validatePasswordStrength } from '../utils/password.js';
 import { isPasswordExpired, validatePassword, recordPasswordHistory } from '../services/password-policy.service.js';
 import { isMfaRequiredForUser } from '../services/mfa-policy.service.js';
@@ -15,7 +16,8 @@ import { authenticateToken } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { success, error, message, ErrorCode, ApiResponse } from '../utils/response.js';
 import { revokeToken, revokeAllUserTokens, RevokeReason } from '../utils/token-blacklist.js';
-import { users, accessTokens, refreshTokens, sessions, emailVerifications, passwordResets, trustedDevices, accountDeletionRequests, mfaFactors } from '../schema.js';
+import { loginAttempts, mfaChallenge, mfaVerify } from '../utils/metrics.js';
+import { users, accessTokens, refreshTokens, sessions, emailVerifications, passwordResets, trustedDevices, accountDeletionRequests, mfaFactors, authCodes, identityProviders } from '../schema.js';
 import { eq, and, gt, inArray, desc } from 'drizzle-orm';
 import {
   registerSchema,
@@ -144,7 +146,8 @@ async function completeLogin(user: UserRow, req: express.Request, opts: {
     deviceId,
   });
 
-  await logAudit(user.id, 'LOGIN_SUCCESS', req, `Session: ${sessionId}; amr=${opts.amr.join(',')}`, tenantId);
+  await logAudit({ req, action: AuditAction.LOGIN_SUCCESS, userId: user.id, details: `Session: ${sessionId}; amr=${opts.amr.join(',')}`, tenantId: tenantId });
+  loginAttempts.inc({ outcome: 'success', method: opts.amr.join(','), tenant_id: tenantId });
 
   return success({
     access_token: accessToken,
@@ -189,7 +192,7 @@ router.post('/register', validate({ body: registerSchema }), async (req, res) =>
       tenantId,
     });
     await recordPasswordHistory(id, hash, tenantId);
-    await logAudit(id, 'REGISTER', req, `Registered ${username}`, tenantId);
+    await logAudit({ req, action: AuditAction.REGISTER, userId: id, details: `Registered ${username}`, tenantId: tenantId });
 
     const verificationToken = crypto.randomUUID();
     const verificationExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
@@ -219,12 +222,14 @@ router.post('/login', validate({ body: loginSchema }), async (req, res) => {
   const [user] = await db.select().from(users).where(and(eq(users.username, username), eq(users.tenantId, tenantId))).limit(1);
 
   if (!user) {
-    await logAudit(null, 'LOGIN_FAILED', req, `Failed login for ${username}`, tenantId);
+    await logAudit({ req, action: AuditAction.LOGIN_FAILED, details: `Failed login for ${username}`, tenantId: tenantId });
+    loginAttempts.inc({ outcome: 'fail', method: 'password', tenant_id: tenantId });
     return res.status(401).json(error('Invalid credentials', ErrorCode.AUTH_INVALID_CREDENTIALS));
   }
 
   if (!user.isActive) {
-    await logAudit(user.id, 'LOGIN_FAILED', req, `Banned user attempted login: ${username}`);
+    await logAudit({ req, action: AuditAction.LOGIN_FAILED, userId: user.id, details: `Banned user attempted login: ${username}` });
+    loginAttempts.inc({ outcome: 'blocked', method: 'password', tenant_id: tenantId });
     return res.status(403).json(error('Account is disabled', ErrorCode.ACCOUNT_DISABLED));
   }
 
@@ -246,7 +251,8 @@ router.post('/login', validate({ body: loginSchema }), async (req, res) => {
     } else {
       await db.update(users).set({ failedLoginAttempts: newAttempts }).where(eq(users.id, user.id));
     }
-    await logAudit(user.id, 'LOGIN_FAILED', req, `Failed login for ${username}`, tenantId);
+    await logAudit({ req, action: AuditAction.LOGIN_FAILED, userId: user.id, details: `Failed login for ${username}`, tenantId: tenantId });
+    loginAttempts.inc({ outcome: 'fail', method: 'password', tenant_id: tenantId });
     return res.status(401).json(error('Invalid credentials', ErrorCode.AUTH_INVALID_CREDENTIALS));
   }
 
@@ -372,10 +378,12 @@ router.post('/mfa/challenge', validate({ body: mfaChallengeSchema }), async (req
 
   if (factor.type === 'email' || factor.type === 'sms') {
     await mfaService.sendLoginChallenge(user.id, factor_id, user.username);
+    mfaChallenge.inc({ type: factor.type, tenant_id: req.tenantId || 'default' });
     return res.json(message('Verification code sent'));
   }
   if (factor.type === 'webauthn') {
     const options = await mfaService.beginWebauthnAuthentication(user.id, factor_id);
+    mfaChallenge.inc({ type: 'webauthn', tenant_id: req.tenantId || 'default' });
     return res.json(success({ options }));
   }
 
@@ -422,9 +430,12 @@ router.post('/mfa/verify', validate({ body: mfaVerifySchema }), async (req, res)
   }
 
   if (!verified || !amrMethod) {
-    await logAudit(user.id, 'LOGIN_FAILED_MFA', req, 'MFA verification failed', tenantId);
+    await logAudit({ req, action: AuditAction.LOGIN_FAILED_MFA, userId: user.id, details: 'MFA verification failed', tenantId: tenantId });
+    mfaVerify.inc({ type: factor_id ? 'factor' : 'recovery', outcome: 'fail', tenant_id: tenantId });
     return res.status(401).json(error('Invalid MFA verification', ErrorCode.AUTH_OTP_INVALID));
   }
+
+  mfaVerify.inc({ type: amrMethod, outcome: 'success', tenant_id: tenantId });
 
   const result = await completeLogin(user, req, {
     remember_me: !!payload.remember_me,
@@ -477,7 +488,7 @@ router.post('/logout', authenticateToken, async (req, res) => {
       await revokeToken(currentToken, RevokeReason.LOGOUT);
     }
     const tenantId = req.tenantId || req.user?.tenant_id || 'default';
-    await logAudit(userId, 'LOGOUT', req, sessionId ? `Session: ${sessionId}` : 'All sessions', tenantId);
+    await logAudit({ req, action: AuditAction.LOGOUT, userId: userId, details: sessionId ? `Session: ${sessionId}` : 'All sessions', tenantId: tenantId });
     res.json(message('Logged out successfully'));
   } catch (err: any) {
     console.error('Logout error:', err);
@@ -520,7 +531,7 @@ router.post('/otp/verify', authenticateToken, validate({ body: otpVerifySchema }
   if (isValid) {
     await db.update(users).set({ otpEnabled: true }).where(eq(users.id, userId));
     const tenantId = req.tenantId || req.user!.tenant_id || 'default';
-    await logAudit(userId, 'OTP_ENABLED', req, '', tenantId);
+    await logAudit({ req, action: AuditAction.OTP_ENABLED, userId: userId, tenantId: tenantId });
     res.json(success({ enabled: true }, 'OTP enabled successfully'));
   } else {
     res.status(400).json(error('Invalid OTP', ErrorCode.AUTH_OTP_INVALID));
@@ -556,7 +567,7 @@ router.post('/email/verify', validate({ body: emailVerifySchema }), async (req, 
   await db.update(emailVerifications).set({ used: true }).where(eq(emailVerifications.id, record.id));
   await db.update(users).set({ emailVerified: true, emailVerifiedAt: now }).where(eq(users.id, record.userId));
 
-  await logAudit(record.userId, 'EMAIL_VERIFIED', req, 'Email verified successfully');
+  await logAudit({ req, action: AuditAction.EMAIL_VERIFIED, userId: record.userId, details: 'Email verified successfully' });
   res.json(message('Email verified successfully'));
 });
 
@@ -584,7 +595,7 @@ router.post('/email/resend', authenticateToken, async (req, res) => {
   });
 
   const tenantId = req.tenantId || user.tenantId || 'default';
-  await logAudit(userId, 'EMAIL_VERIFICATION_RESENT', req, 'Verification email resent', tenantId);
+  await logAudit({ req, action: AuditAction.EMAIL_VERIFICATION_RESENT, userId: userId, details: 'Verification email resent', tenantId: tenantId });
   res.json(message('Verification email sent'));
 });
 
@@ -621,7 +632,7 @@ router.post('/email/resend-public', validate({ body: emailResendPublicSchema }),
     console.error('Failed to send verification email:', err);
   });
 
-  await logAudit(user.id, 'EMAIL_VERIFICATION_RESENT', req, 'Verification email resent (public)', tenantId);
+  await logAudit({ req, action: AuditAction.EMAIL_VERIFICATION_RESENT, userId: user.id, details: 'Verification email resent (public)', tenantId: tenantId });
   res.json(message('If the email exists and is unverified, a verification link will be sent'));
 });
 
@@ -645,7 +656,7 @@ router.post('/password/reset-request', validate({ body: passwordResetRequestSche
     expiresAt,
   });
 
-  await logAudit(user.id, 'PASSWORD_RESET_REQUEST', req, `Password reset requested for ${email}`, tenantId);
+  await logAudit({ req, action: AuditAction.PASSWORD_RESET_REQUEST, userId: user.id, details: `Password reset requested for ${email}`, tenantId: tenantId });
 
   emailService.sendPasswordResetEmail(email, token, user.username).catch((err: any) => {
     console.error('Failed to send password reset email:', err);
@@ -699,7 +710,7 @@ router.post('/password/reset', validate({ body: passwordResetSchema }), async (r
 
   await db.update(refreshTokens).set({ revoked: true }).where(eq(refreshTokens.userId, reset.userId));
 
-  await logAudit(reset.userId, 'PASSWORD_RESET_COMPLETE', req, 'Password has been reset', tenantId);
+  await logAudit({ req, action: AuditAction.PASSWORD_RESET_COMPLETE, userId: reset.userId, details: 'Password has been reset', tenantId: tenantId });
   res.json(message('Password has been reset successfully'));
 });
 
@@ -764,7 +775,7 @@ router.post('/refresh', validate({ body: tokenRefreshSchema }), async (req, res)
     rememberMe: storedToken.rememberMe || false,
   });
 
-  await logAudit(user.id, 'TOKEN_REFRESH', req, '', user.tenantId || 'default');
+  await logAudit({ req, action: AuditAction.TOKEN_REFRESH, userId: user.id, tenantId: user.tenantId || 'default' });
 
   res.json(success({
     access_token: accessToken,
@@ -823,7 +834,7 @@ router.post('/password/change-expired', validate({ body: changeExpiredPasswordSc
     await db.update(accessTokens).set({ revoked: true }).where(eq(accessTokens.userId, user.id));
 
     // 7. Write audit log
-    await logAudit(user.id, 'PASSWORD_CHANGED_EXPIRED', req, `Expired password changed for ${username}`, tenantId);
+    await logAudit({ req, action: AuditAction.PASSWORD_CHANGED_EXPIRED, userId: user.id, details: `Expired password changed for ${username}`, tenantId: tenantId });
 
     return res.json(message('Password changed successfully'));
   } catch (err: any) {
@@ -869,13 +880,91 @@ router.post('/force-change-password', authenticateToken, validate({ body: change
     await db.update(refreshTokens).set({ revoked: true }).where(eq(refreshTokens.userId, user.id));
     await db.update(accessTokens).set({ revoked: true }).where(eq(accessTokens.userId, user.id));
 
-    await logAudit(user.id, 'PASSWORD_FORCE_CHANGED', req, `Initial password changed on first login`, tenantId);
+    await logAudit({ req, action: AuditAction.PASSWORD_FORCE_CHANGED, userId: user.id, details: `Initial password changed on first login`, tenantId: tenantId });
 
     return res.json(message('Password changed successfully. Please log in with your new password.'));
   } catch (err: any) {
     console.error('force-change-password error:', err);
     return res.status(500).json(error('Internal server error', ErrorCode.SERVER_ERROR));
   }
+});
+
+// GET /api/auth/idps — public discovery for the login page's SSO buttons.
+// When ?email= is given, providers whose email_domains list matches are returned first —
+// the SPA can use that to auto-suggest "sign in with $displayName" for a typed email.
+router.get('/idps', async (req, res) => {
+  const tenantId = req.tenantId;
+  const emailParam = typeof req.query.email === 'string' ? req.query.email.toLowerCase() : null;
+  const domain = emailParam?.includes('@') ? emailParam.split('@')[1] : null;
+
+  const rows = await db.select({
+    alias: identityProviders.alias,
+    type: identityProviders.type,
+    displayName: identityProviders.displayName,
+    emailDomains: identityProviders.emailDomains,
+  }).from(identityProviders).where(and(
+    eq(identityProviders.tenantId, tenantId),
+    eq(identityProviders.enabled, true),
+  ));
+
+  const providers = rows.map(r => ({
+    alias: r.alias,
+    type: r.type,
+    displayName: r.displayName,
+    matchesEmailDomain: !!domain && (r.emailDomains || '').split(',').map(d => d.trim().toLowerCase()).includes(domain),
+  }));
+
+  providers.sort((a, b) => Number(b.matchesEmailDomain) - Number(a.matchesEmailDomain));
+  res.json(success({ providers }));
+});
+
+// POST /api/auth/federation/exchange
+// Shared landing point for SAML / OIDC-RP redirect logins (see identity-link.service.ts's
+// issueFederatedSession) — mirrors /api/auth/github/exchange's one-time-code pattern so
+// tokens never ride through the browser's address bar or history.
+router.post('/federation/exchange', async (req, res) => {
+  const { code } = req.body;
+  if (!code) return res.status(400).json(error('Code required', ErrorCode.VALIDATION_REQUIRED));
+
+  const [authCode] = await db
+    .select()
+    .from(authCodes)
+    .where(and(eq(authCodes.code, code), eq(authCodes.clientId, 'federation-oauth'), eq(authCodes.scope, 'federation_login')))
+    .limit(1);
+  if (!authCode) return res.status(401).json(error('Invalid code', ErrorCode.TOKEN_INVALID));
+
+  await db.delete(authCodes).where(eq(authCodes.id, authCode.id));
+
+  if (authCode.expiresAt < new Date()) return res.status(401).json(error('Code expired', ErrorCode.TOKEN_EXPIRED));
+
+  const [accessTokenRecord] = await db
+    .select({ token: accessTokens.token })
+    .from(accessTokens)
+    .where(and(eq(accessTokens.userId, authCode.userId), eq(accessTokens.revoked, false)))
+    .orderBy(desc(accessTokens.createdAt))
+    .limit(1);
+
+  const [refreshTokenRecord] = await db
+    .select({ token: refreshTokens.token })
+    .from(refreshTokens)
+    .where(and(eq(refreshTokens.userId, authCode.userId), eq(refreshTokens.revoked, false)))
+    .orderBy(desc(refreshTokens.createdAt))
+    .limit(1);
+
+  if (!accessTokenRecord || !refreshTokenRecord) return res.status(500).json(error('Token generation failed', ErrorCode.SERVER_ERROR));
+
+  const [user] = await db
+    .select({ id: users.id, username: users.username, email: users.email, isAdmin: users.isAdmin, otpEnabled: users.otpEnabled, tenantId: users.tenantId })
+    .from(users)
+    .where(eq(users.id, authCode.userId))
+    .limit(1);
+
+  res.json(success({
+    access_token: accessTokenRecord.token,
+    refresh_token: refreshTokenRecord.token,
+    token_type: 'Bearer',
+    user,
+  }));
 });
 
 export default router;

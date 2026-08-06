@@ -1,6 +1,7 @@
 import express from 'express';
 import { config } from '../config.js';
 import { publishJwks } from '../services/keys.service.js';
+import { jwksRequests } from '../utils/metrics.js';
 
 const router = express.Router();
 
@@ -29,7 +30,7 @@ router.get('/openid-configuration', (req, res) => {
       'urn:ietf:params:oauth:grant-type:device_code',
       'urn:ietf:params:oauth:grant-type:token-exchange',
     ],
-    scopes_supported: ['openid', 'profile', 'email'],
+    scopes_supported: ['openid', 'profile', 'email', 'roles', 'groups', 'scim:read', 'scim:write'],
     id_token_signing_alg_values_supported: ['HS256'],
     code_challenge_methods_supported: ['S256', 'plain'],
     subject_types_supported: ['public'],
@@ -48,6 +49,7 @@ router.get('/openid-configuration', (req, res) => {
 
 // GET /.well-known/jwks.json
 router.get('/jwks.json', async (req, res) => {
+  jwksRequests.inc();
   const jwks = await publishJwks();
   res.set('Cache-Control', 'public, max-age=300');
   res.json(jwks);

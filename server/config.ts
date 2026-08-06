@@ -36,6 +36,10 @@ const EnvSchema = z.object({
   TENCENT_SMS_SIGN_NAME: z.string().optional(),
   TENCENT_SMS_TEMPLATE_ID: z.string().optional(),
   TENCENT_SMS_SDK_APP_ID: z.string().optional(),
+
+  // Metrics & Observability
+  METRICS_TOKEN: z.string().optional(),  // Bearer token for /metrics endpoint; if empty, only private IPs allowed
+  APP_VERSION: z.string().default('1.0.0'),
 });
 
 const _env = EnvSchema.safeParse(process.env);
@@ -81,3 +85,9 @@ export const MFA_CONFIG = {
 
 // Runtime project root. In production compiled files run from build/, so module-relative paths are unstable.
 export const rootDir = path.resolve(process.cwd());
+
+// SMTP config (used by health check)
+export const SMTP_CONFIG = {
+  host: config.SMTP_HOST,
+  port: config.SMTP_PORT,
+};

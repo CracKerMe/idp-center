@@ -19,6 +19,7 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
+    "@node-saml/node-saml": "^5.1.0",
     "@simplewebauthn/browser": "^13.3.0",
     "@simplewebauthn/server": "^13.3.2",
     "@tailwindcss/vite": "^4.1.14",
@@ -37,12 +38,15 @@
     "helmet": "^8.1.0",
     "jose": "^6.2.5",
     "jsonwebtoken": "^9.0.3",
+    "ldapts": "^9.0.0",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "multer": "^2.1.1",
     "nodemailer": "^8.0.2",
+    "openid-client": "^6.8.4",
     "otplib": "^12.0.1",
     "postgres": "^3.4.9",
+    "prom-client": "^15.1.3",
     "qrcode": "^1.5.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

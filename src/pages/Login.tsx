@@ -8,6 +8,7 @@ import { GithubOAuthButton } from '../components/GithubOAuthButton';
 import { EmailVerificationResend } from '../components/EmailVerificationResend';
 import { DeviceTrustOptions } from '../components/DeviceTrustOptions';
 import { MfaChallenge } from '../components/MfaChallenge';
+import { SsoProviderButtons } from '../components/SsoProviderButtons';
 
 export default function Login({ setUser }: { setUser: (user: AuthUser | null) => void }) {
   const [username, setUsername] = useState('');
@@ -333,6 +334,13 @@ export default function Login({ setUser }: { setUser: (user: AuthUser | null) =>
           )}
 
           {!mustChangePassword && !mfaToken && <GithubOAuthButton redirect={redirect} />}
+          {!mustChangePassword && !mfaToken && (
+            <SsoProviderButtons
+              redirect={redirect}
+              onLdapSuccess={(data) => finishLogin(data as any)}
+              onError={(msg) => setError(msg)}
+            />
+          )}
 
           {!mustChangePassword && !mfaToken && (
           <div className="mt-6">

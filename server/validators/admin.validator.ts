@@ -113,3 +113,29 @@ export const ipWhitelistEntrySchema = z.object({
 });
 
 export type IpWhitelistEntryInput = z.infer<typeof ipWhitelistEntrySchema>;
+
+// Identity provider (federation) schemas
+const aliasSchema = z.string().min(1).max(50).regex(/^[a-z0-9-]+$/, 'Alias can only contain lowercase letters, numbers, and hyphens');
+
+export const createIdpSchema = z.object({
+  alias: aliasSchema,
+  type: z.enum(['saml', 'oidc', 'ldap']),
+  displayName: z.string().min(1).max(100),
+  enabled: z.boolean().optional(),
+  config: z.record(z.string(), z.unknown()),
+  attributeMapping: z.record(z.string(), z.string()).optional(),
+  jitProvisioning: z.boolean().optional(),
+  linkByVerifiedEmail: z.boolean().optional(),
+  defaultRoles: z.string().optional(),
+  emailDomains: z.string().optional(),
+});
+
+export type CreateIdpInput = z.infer<typeof createIdpSchema>;
+
+export const updateIdpSchema = createIdpSchema.partial().omit({ alias: true, type: true });
+
+export type UpdateIdpInput = z.infer<typeof updateIdpSchema>;
+
+export const idpIdParamsSchema = z.object({
+  id: z.string().uuid(),
+});

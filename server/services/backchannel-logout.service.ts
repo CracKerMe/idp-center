@@ -3,6 +3,7 @@ import { eq, and, lte } from 'drizzle-orm';
 import { db } from '../database.js';
 import { backchannelLogoutDeliveries, clients, oidcSessions } from '../schema.js';
 import { signLogoutToken } from '../oauth/jwt.js';
+import { backchannelLogoutDeliveries as backchannelLogoutDeliveriesCounter, backchannelLogoutQueueSize } from '../utils/metrics.js';
 
 const MAX_ATTEMPTS = 3;
 const DELIVERY_TIMEOUT_MS = 5000;
@@ -57,6 +58,9 @@ export async function drainBackchannelQueue(): Promise<number> {
     .where(and(eq(backchannelLogoutDeliveries.status, 'pending'), lte(backchannelLogoutDeliveries.nextAttemptAt, now)))
     .limit(50);
 
+  // Update queue size metric (approximate - just count pending items we're processing)
+  backchannelLogoutQueueSize.set(pending.length);
+
   let delivered = 0;
 
   for (const delivery of pending) {
@@ -66,6 +70,7 @@ export async function drainBackchannelQueue(): Promise<number> {
         .update(backchannelLogoutDeliveries)
         .set({ status: 'failed', lastError: 'oidc session no longer exists' })
         .where(eq(backchannelLogoutDeliveries.id, delivery.id));
+      backchannelLogoutDeliveriesCounter.inc({ status: 'failed' });
       continue;
     }
 
@@ -88,6 +93,7 @@ export async function drainBackchannelQueue(): Promise<number> {
       if (!res.ok) throw new Error(`RP responded ${res.status}`);
 
       await db.update(backchannelLogoutDeliveries).set({ status: 'delivered' }).where(eq(backchannelLogoutDeliveries.id, delivery.id));
+      backchannelLogoutDeliveriesCounter.inc({ status: 'delivered' });
       delivered++;
     } catch (err) {
       const attempts = delivery.attempts + 1;
@@ -101,6 +107,7 @@ export async function drainBackchannelQueue(): Promise<number> {
           lastError: err instanceof Error ? err.message : String(err),
         })
         .where(eq(backchannelLogoutDeliveries.id, delivery.id));
+      backchannelLogoutDeliveriesCounter.inc({ status: failed ? 'failed' : 'pending' });
     }
   }
 

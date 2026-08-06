@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { db } from '../database.js';
 import { config } from '../config.js';
 import { logAudit } from '../utils/audit.js';
+import { AuditAction } from '../utils/audit-actions.js';
 import { generateOAuthState } from '../services/crypto.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { success, error, ErrorCode } from '../utils/response.js';
@@ -19,6 +20,8 @@ import { revokeTokensBySession } from '../utils/token-blacklist.js';
 import { enqueueBackchannelLogout } from '../services/backchannel-logout.service.js';
 import { handlePar, peekPar, resolvePar, PAR_REQUEST_URI_PREFIX } from '../oauth/par.js';
 import { handleRegister, handleRegistrationRead, handleRegistrationUpdate, handleRegistrationDelete } from '../oauth/dynamic-registration.js';
+import { getUserRoleNames, getUserGroupNames } from '../services/rbac.service.js';
+import { tokenIssued } from '../utils/metrics.js';
 
 const router = express.Router();
 
@@ -171,7 +174,7 @@ router.post('/authorize', authenticateToken, async (req, res) => {
     sid: oidcSession.sid,
   });
 
-  await logAudit(userId, 'OAUTH_AUTHORIZE', req, `Authorized client ${client_id}`, tenantId);
+  await logAudit({ req, action: AuditAction.OAUTH_AUTHORIZE, userId: userId, details: `Authorized client ${client_id}`, tenantId: tenantId });
 
   const redirectUrl = new URL(redirect_uri as string);
   redirectUrl.searchParams.append('code', code);
@@ -208,6 +211,12 @@ router.post('/token', async (req, res) => {
       now: new Date(),
     });
 
+    // Record token issuance metrics
+    tokenIssued.inc({ grant_type: grantType, token_type: 'access', tenant_id: client.tenantId });
+    if (grantType === 'authorization_code' || grantType === 'refresh_token') {
+      tokenIssued.inc({ grant_type: grantType, token_type: 'refresh', tenant_id: client.tenantId });
+    }
+
     res.json(result);
   } catch (err) {
     sendOAuthError(res, err);
@@ -242,6 +251,8 @@ router.get('/userinfo', async (req, res) => {
     response.username = user.username;
     if (user.avatarUrl) response.picture = user.avatarUrl;
   }
+  if (scope.includes('roles')) response.roles = await getUserRoleNames(user.id, accessToken.tenantId);
+  if (scope.includes('groups')) response.groups = await getUserGroupNames(user.id, accessToken.tenantId);
 
   res.json(response);
 });
@@ -343,7 +354,7 @@ router.post('/device/approve', authenticateToken, async (req, res) => {
     return res.status(404).json(error('Invalid or expired user_code', ErrorCode.RESOURCE_NOT_FOUND));
   }
 
-  await logAudit(req.user!.id, 'OAUTH_DEVICE_APPROVE', req, `Approved device code for client ${updated.clientId}`, tenantId);
+  await logAudit({ req, action: AuditAction.OAUTH_DEVICE_APPROVE, userId: req.user!.id, details: `Approved device code for client ${updated.clientId}`, tenantId: tenantId });
   res.json(success({ approved: true }));
 });
 
@@ -362,7 +373,7 @@ router.post('/device/deny', authenticateToken, async (req, res) => {
     return res.status(404).json(error('Invalid or expired user_code', ErrorCode.RESOURCE_NOT_FOUND));
   }
 
-  await logAudit(req.user!.id, 'OAUTH_DEVICE_DENY', req, `Denied device code for client ${updated.clientId}`, tenantId);
+  await logAudit({ req, action: AuditAction.OAUTH_DEVICE_DENY, userId: req.user!.id, details: `Denied device code for client ${updated.clientId}`, tenantId: tenantId });
   res.json(success({ denied: true }));
 });
 
@@ -441,7 +452,7 @@ router.post('/end_session/confirm', authenticateToken, async (req, res) => {
 
   await db.delete(sessions).where(and(eq(sessions.id, browserSessionId), eq(sessions.userId, req.user!.id)));
 
-  await logAudit(req.user!.id, 'OAUTH_END_SESSION', req, `Terminated ${liveSessions.length} OIDC session(s)`, tenantId);
+  await logAudit({ req, action: AuditAction.OAUTH_END_SESSION, userId: req.user!.id, details: `Terminated ${liveSessions.length} OIDC session(s)`, tenantId: tenantId });
 
   const postLogoutRedirectUri = typeof req.body?.post_logout_redirect_uri === 'string' ? req.body.post_logout_redirect_uri : null;
   res.json(success({ front_channel_logout_uris: frontChannelLogoutUris, post_logout_redirect_uri: postLogoutRedirectUri }));

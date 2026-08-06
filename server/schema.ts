@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, boolean, integer, index, uniqueIndex } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, boolean, integer, bigserial, index, uniqueIndex } from 'drizzle-orm/pg-core';
 
 export const tenants = pgTable('tenants', {
   id: text('id').primaryKey(),
@@ -17,6 +17,7 @@ export const users = pgTable('users', {
   tenantId: text('tenant_id').default('default'),
   isActive: boolean('is_active').default(true),
   isAdmin: boolean('is_admin').default(false),
+  isPlatformAdmin: boolean('is_platform_admin').default(false),
   otpSecret: text('otp_secret'),
   otpEnabled: boolean('otp_enabled').default(false),
   createdAt: timestamp('created_at').defaultNow(),
@@ -118,14 +119,27 @@ export const sessions = pgTable('sessions', {
 
 export const auditLogs = pgTable('audit_logs', {
   id: text('id').primaryKey(),
+  // Monotonic insert-order counter — the hash chain and /audit/verify walk this instead of
+  // created_at, since concurrent writers can share a millisecond-resolution timestamp but
+  // never a seq value (logAudit() serializes inserts with pg_advisory_xact_lock precisely
+  // so this stays a true total order).
+  seq: bigserial('seq', { mode: 'number' }).notNull(),
   userId: text('user_id'),
   tenantId: text('tenant_id'),
   action: text('action').notNull(),
+  targetId: text('target_id'),
   ipAddress: text('ip_address'),
   userAgent: text('user_agent'),
   details: text('details'),
+  prevHash: text('prev_hash'),
+  hash: text('hash'),
   createdAt: timestamp('created_at').defaultNow(),
-});
+}, (t) => [
+  index('idx_audit_logs_tenant_created').on(t.tenantId, t.createdAt),
+  index('idx_audit_logs_user_created').on(t.userId, t.createdAt),
+  index('idx_audit_logs_action').on(t.action),
+  uniqueIndex('idx_audit_logs_seq').on(t.seq),
+]);
 
 export const passwordResets = pgTable('password_resets', {
   id: text('id').primaryKey(),
@@ -139,6 +153,11 @@ export const passwordResets = pgTable('password_resets', {
 export const oauthStates = pgTable('oauth_states', {
   state: text('state').primaryKey(),
   expiresAt: timestamp('expires_at').notNull(),
+  // Federation-only (OIDC RP flow): which identity_providers row this state belongs to,
+  // plus a JSON blob of { nonce, codeVerifier, redirectAfter } — kept as one column instead
+  // of three narrow ones since only the federation flow ever populates it.
+  provider: text('provider'),
+  payload: text('payload'),
   createdAt: timestamp('created_at').defaultNow(),
 });
 
@@ -160,10 +179,16 @@ export const linkedAccounts = pgTable('linked_accounts', {
   providerUserId: text('provider_user_id').notNull(),
   providerUsername: text('provider_username'),
   accessToken: text('access_token'),
+  // Nullable for the transition window — backfilled from the linked user's tenant by
+  // identity-link.service.ts's migrateLegacyLinkedAccounts() on startup. Needed because two
+  // different tenants' SAML/OIDC IdPs can otherwise mint colliding providerUserId values
+  // (unlike GitHub's globally-unique numeric id, a NameID like "user123" is only unique
+  // within its own IdP) — without this, linking one would silently hijack the other.
+  tenantId: text('tenant_id'),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 }, (t) => [
-  uniqueIndex('idx_linked_accounts_provider_user').on(t.provider, t.providerUserId),
+  uniqueIndex('idx_linked_accounts_provider_user_tenant').on(t.provider, t.providerUserId, t.tenantId),
 ]);
 
 export const trustedDevices = pgTable('trusted_devices', {
@@ -366,3 +391,96 @@ export const tenantMfaPolicies = pgTable('tenant_mfa_policies', {
   rememberDeviceDays: integer('remember_device_days').default(30),
   updatedAt: timestamp('updated_at').defaultNow(),
 });
+
+// --- Phase 2.3: RBAC + SCIM ---
+
+export const roles = pgTable('roles', {
+  id: text('id').primaryKey(),
+  tenantId: text('tenant_id').notNull().references(() => tenants.id),
+  name: text('name').notNull(),
+  description: text('description'),
+  isSystem: boolean('is_system').default(false),
+  createdAt: timestamp('created_at').defaultNow(),
+}, (t) => [
+  uniqueIndex('idx_roles_tenant_name').on(t.tenantId, t.name),
+]);
+
+// Global dictionary — permission codes are not tenant-scoped, roles are.
+export const permissions = pgTable('permissions', {
+  id: text('id').primaryKey(),
+  code: text('code').notNull().unique(),   // e.g. 'admin:*', 'admin:users:read', 'scim:write'
+  description: text('description'),
+});
+
+export const rolePermissions = pgTable('role_permissions', {
+  roleId: text('role_id').notNull().references(() => roles.id),
+  permissionId: text('permission_id').notNull().references(() => permissions.id),
+}, (t) => [
+  uniqueIndex('idx_role_permissions_unique').on(t.roleId, t.permissionId),
+]);
+
+export const groups = pgTable('groups', {
+  id: text('id').primaryKey(),
+  tenantId: text('tenant_id').notNull().references(() => tenants.id),
+  name: text('name').notNull(),
+  parentId: text('parent_id'),
+  createdAt: timestamp('created_at').defaultNow(),
+}, (t) => [
+  uniqueIndex('idx_groups_tenant_name').on(t.tenantId, t.name),
+]);
+
+export const userRoles = pgTable('user_roles', {
+  userId: text('user_id').notNull().references(() => users.id),
+  roleId: text('role_id').notNull().references(() => roles.id),
+  tenantId: text('tenant_id').notNull().references(() => tenants.id),
+}, (t) => [
+  uniqueIndex('idx_user_roles_unique').on(t.userId, t.roleId),
+  index('idx_user_roles_user_tenant').on(t.userId, t.tenantId),
+]);
+
+export const userGroups = pgTable('user_groups', {
+  userId: text('user_id').notNull().references(() => users.id),
+  groupId: text('group_id').notNull().references(() => groups.id),
+}, (t) => [
+  uniqueIndex('idx_user_groups_unique').on(t.userId, t.groupId),
+]);
+
+export const groupRoles = pgTable('group_roles', {
+  groupId: text('group_id').notNull().references(() => groups.id),
+  roleId: text('role_id').notNull().references(() => roles.id),
+}, (t) => [
+  uniqueIndex('idx_group_roles_unique').on(t.groupId, t.roleId),
+]);
+
+// --- Phase 2.2: Federated identity ---
+
+export const identityProviders = pgTable('identity_providers', {
+  id: text('id').primaryKey(),
+  tenantId: text('tenant_id').notNull().references(() => tenants.id),
+  alias: text('alias').notNull(),               // URL segment: /api/federation/:alias/...
+  type: text('type').notNull(),                  // saml | oidc | ldap | oauth2
+  displayName: text('display_name').notNull(),
+  enabled: boolean('enabled').default(true),
+  configEnc: text('config_enc').notNull(),        // full config JSON, encryptToken()
+  attributeMapping: text('attribute_mapping').notNull().default('{}'),
+  jitProvisioning: boolean('jit_provisioning').default(true),
+  linkByVerifiedEmail: boolean('link_by_verified_email').default(false),
+  defaultRoles: text('default_roles'),
+  emailDomains: text('email_domains'),            // comma-separated, for login-page auto-routing
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+}, (t) => [
+  uniqueIndex('idx_idp_tenant_alias').on(t.tenantId, t.alias),
+]);
+
+// SAML assertions are single-use (RFC-adjacent convention, not a hard SAML requirement,
+// but the standard replay defense): each assertion ID is recorded once and rejected on reuse.
+export const samlAssertionIds = pgTable('saml_assertion_ids', {
+  assertionId: text('assertion_id').primaryKey(),
+  idpAlias: text('idp_alias').notNull(),
+  tenantId: text('tenant_id').notNull(),
+  expiresAt: timestamp('expires_at').notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
+}, (t) => [
+  index('idx_saml_assertion_expires').on(t.expiresAt),
+]);

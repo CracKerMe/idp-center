@@ -18,10 +18,13 @@ export async function tenantContext(req: Request, res: Response, next: NextFunct
                      req.query.tenant_id?.toString() ||
                      'default';
 
-    const [tenant] = await db.select({ id: tenants.id }).from(tenants).where(eq(tenants.id, tenantId)).limit(1);
+    const [tenant] = await db.select({ id: tenants.id, isActive: tenants.isActive }).from(tenants).where(eq(tenants.id, tenantId)).limit(1);
 
     if (!tenant) {
       return res.status(400).json(error(`Tenant '${tenantId}' not found`, ErrorCode.RESOURCE_NOT_FOUND));
+    }
+    if (!tenant.isActive) {
+      return res.status(403).json(error(`Tenant '${tenantId}' is disabled`, ErrorCode.ACCOUNT_DISABLED));
     }
 
     req.tenantId = tenantId;

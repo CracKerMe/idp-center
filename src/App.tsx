@@ -57,9 +57,38 @@ export default function App() {
     const hashQuery = hashQueryIndex !== -1 ? hash.slice(hashQueryIndex + 1) : '';
     const hashParams = new URLSearchParams(hashQuery);
     const githubCode = hashParams.get('github_code');
+    const federationCode = hashParams.get('federation_code');
     const sessionId = hashParams.get('session_id');
 
     const init = async () => {
+      if (federationCode) {
+        // Same one-time-code handoff as GitHub, shared by SAML and OIDC RP logins
+        // (server/services/identity-link.service.ts's issueFederatedSession).
+        const cleanHash = hashQueryIndex !== -1 ? hash.slice(0, hashQueryIndex) : hash;
+        window.history.replaceState({}, '', window.location.pathname + cleanHash);
+        try {
+          const exchangeRes = await fetch('/api/auth/federation/exchange', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code: federationCode })
+          });
+          const result = await parseApiResponse<{ access_token: string; refresh_token: string; user: any }>(exchangeRes);
+          if (isSuccess(result) && result.data) {
+            const data = result.data;
+            localStorage.setItem('token', data.access_token);
+            localStorage.setItem('refresh_token', data.refresh_token);
+            if (sessionId) localStorage.setItem('session_id', sessionId);
+            if (data.user) {
+              setUser(data.user);
+              setLoading(false);
+              return;
+            }
+          }
+        } catch (error) {
+          console.error('Error exchanging federation code:', error);
+        }
+      }
+
       if (githubCode) {
         // Clean up URL immediately (hash mode: keep hash path, remove query params)
         const cleanHash = hashQueryIndex !== -1 ? hash.slice(0, hashQueryIndex) : hash;

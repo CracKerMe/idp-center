@@ -67,7 +67,7 @@ export const deviceCodeGrant: GrantHandler = {
       expires_in: TOKEN_CONFIG.accessTokenExpirySeconds,
     };
     if (scope.includes('openid')) {
-      response.id_token = issueIdToken(user, { clientId: client.clientId, scope, nonce: claimed.nonce });
+      response.id_token = await issueIdToken(user, { clientId: client.clientId, scope, nonce: claimed.nonce });
     }
     return response;
   },

@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 const mockDb = {
   delete: vi.fn(),
   select: vi.fn(),
+  execute: vi.fn(),
 };
 
 vi.mock('../server/database.js', () => ({ db: mockDb }));
@@ -19,12 +20,23 @@ function createMockResult(rowCount: number) {
 }
 
 function mockNoActiveSigningKey() {
-  // rotateSigningKeyIfDue() selects the active signing key — return none so it's a no-op.
-  const chain: any = {};
-  chain.from = vi.fn().mockReturnValue(chain);
-  chain.where = vi.fn().mockReturnValue(chain);
-  chain.limit = vi.fn().mockResolvedValue([]);
-  mockDb.select.mockReturnValue(chain);
+  // Mock all select calls used by cleanup:
+  // 1. drainBackchannelQueue: pending deliveries
+  // 2. rotateSigningKeyIfDue: active signing key
+  // 3. purgeExpiredAuditLogs: all tenants
+  let selectCallCount = 0;
+  mockDb.select.mockImplementation(() => {
+    selectCallCount++;
+    const chain: any = {};
+    chain.from = vi.fn().mockReturnValue(chain);
+    chain.where = vi.fn().mockReturnValue(chain);
+    chain.limit = vi.fn().mockReturnValue(chain);
+    chain.orderBy = vi.fn().mockReturnValue(chain);
+    // Return empty array for all selects (no pending deliveries, no active key, no tenants)
+    chain.then = (resolve: any) => resolve([]);
+    chain[Symbol.toStringTag] = 'Promise';
+    return chain;
+  });
 }
 
 describe('cleanupExpiredTokens', () => {

@@ -71,7 +71,7 @@ export const authorizationCodeGrant: GrantHandler = {
     const authCtx = { amr: oidcSession?.amr, acr: oidcSession?.acr };
     const { token: accessToken } = await issueAccessToken(user, client.clientId, scope, tenantId, oidcSession?.id, jkt ? { jkt } : undefined, authCtx);
     const { token: refreshToken } = await issueRefreshToken({ userId: user.id, clientId: client.clientId, tenantId, scope, oidcSessionId: oidcSession?.id });
-    const idToken = issueIdToken(user, { clientId: client.clientId, scope, nonce: authCode.nonce, sid: oidcSession?.sid, authTime: oidcSession?.authTime, ...authCtx });
+    const idToken = await issueIdToken(user, { clientId: client.clientId, scope, nonce: authCode.nonce, sid: oidcSession?.sid, authTime: oidcSession?.authTime, ...authCtx });
 
     return {
       access_token: accessToken,

@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import { db } from '../database.js';
 import { config, TOKEN_CONFIG } from '../config.js';
 import { accessTokens, refreshTokens, users } from '../schema.js';
+import { getUserRoleNames, getUserGroupNames } from '../services/rbac.service.js';
 
 type UserRow = typeof users.$inferSelect;
 
@@ -95,7 +96,7 @@ export async function issueRefreshToken(opts: {
   return { token, expiresAt, familyId };
 }
 
-export function issueIdToken(user: UserRow, opts: { clientId: string; scope: string; nonce?: string | null; sid?: string; authTime?: Date; amr?: string | null; acr?: string | null }): string {
+export async function issueIdToken(user: UserRow, opts: { clientId: string; scope: string; nonce?: string | null; sid?: string; authTime?: Date; amr?: string | null; acr?: string | null }): Promise<string> {
   const payload: Record<string, any> = {
     iss: config.APP_URL,
     sub: user.id,
@@ -113,5 +114,8 @@ export function issueIdToken(user: UserRow, opts: { clientId: string; scope: str
     payload.name = user.fullName || user.username;
     payload.preferred_username = user.username;
   }
+  const tenantId = user.tenantId || 'default';
+  if (opts.scope.includes('roles')) payload.roles = await getUserRoleNames(user.id, tenantId);
+  if (opts.scope.includes('groups')) payload.groups = await getUserGroupNames(user.id, tenantId);
   return jwt.sign(payload, config.JWT_SECRET);
 }

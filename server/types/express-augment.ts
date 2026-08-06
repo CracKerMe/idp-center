@@ -5,6 +5,7 @@ declare global {
     interface Request {
       user?: JwtUserPayload;
       token?: string;
+      isPlatformAdmin?: boolean;
     }
   }
 }

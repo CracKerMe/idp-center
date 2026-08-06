@@ -1,0 +1,92 @@
+{
+  "runId": "idp-phase12-review-msho3p7j-e348c2",
+  "flowName": "idp-phase12-review",
+  "def": {
+    "name": "idp-phase12-review",
+    "description": "Deep review of IDP Center phase 1 + 2 implementation against the plan",
+    "concurrency": 6,
+    "budget": {
+      "maxTokens": 3000000
+    },
+    "phases": [
+      {
+        "id": "rbac-scim",
+        "type": "agent",
+        "agent": "security-reviewer",
+        "task": "You are reviewing a staged implementation in /Users/promisex/Desktop/其他项目/idp-center (Express + TypeScript + Drizzle ORM + PostgreSQL IdP server).\n\nScope: RBAC + SCIM + admin API tenant isolation.\nFiles to read fully:\n- server/services/rbac.service.ts\n- server/routes/scim.ts\n- server/routes/admin.ts\n- server/middleware/auth.ts\n- server/middleware/tenant.ts\n- server/schema.ts (roles/permissions/groups/user_roles/user_groups/group_roles tables)\n- server/validators/admin.validator.ts\n- tests/integration/rbac.test.ts\n\nThe plan required (phase 2.3):\n1. RBAC tables: roles, permissions, role_permissions, groups, user_roles, user_groups, group_roles\n2. users.is_admin kept as compat, migrated to tenant-admin role; authenticateAdmin becomes requirePermission('admin:*'); union of is_admin and roles\n3. FIX existing tenant privilege escalation: admin.ts GET /tenants and user endpoints were NOT filtered by req.tenantId — any admin could see all tenants and users. Introduce platform-admin vs tenant-admin; tenant-admin strictly limited to own tenant.\n4. tenantContext did not validate tenants.is_active — fix it.\n5. SCIM 2.0: /scim/v2/Users, /scim/v2/Groups, filter/startIndex/count, PATCH ops, ServiceProviderConfig. Auth via client_credentials token + scim:write scope.\n6. roles/groups claims injected into id_token and userinfo by scope.\n\nFor EACH requirement: report DONE / PARTIAL / MISSING with file:line evidence.\nThen hunt for actual BUGS and SECURITY HOLES. Specifically check:\n- Can a tenant-admin of tenant A read/modify tenant B's users, clients, roles, groups, audit logs? Enumerate EVERY admin endpoint and state whether it filters by tenant.\n- SCIM auth: what token/scope is required? Is the tenant derived from the token or from a client-controlled input? Can a SCIM client cross tenants? Is scim:read vs scim:write enforced per-method?\n- SCIM filter parsing: injection risk, unsupported operators silently ignored (which would return ALL users instead of a filtered set — a data leak).\n- SCIM PATCH ops: can it set is_admin / is_platform_admin / tenant_id / password?\n- Role assignment: can a tenant-admin grant themselves 'admin:*' or a platform-admin role? Is privilege escalation via role/permission assignment possible?\n- permissionCodesSatisfy wildcard matching logic: any way 'admin:*' or '*' matches unintended codes, or a code like 'admin:read' incorrectly satisfying 'admin:write'?\n- N+1 queries / missing indexes / unbounded queries in rbac.service.ts.\n- rbac.test.ts: does it actually assert the cross-tenant denials, or does it pass vacuously (e.g. skipIf with no DB, or asserting only status codes that would also occur on a 404)?\n\nOutput a markdown report: (A) requirement coverage table, (B) findings ordered by severity (Critical/High/Medium/Low) each with file:line, concrete exploit/impact, and suggested fix. Be precise and cite line numbers. Do NOT edit any files.",
+        "final": false
+      },
+      {
+        "id": "federation",
+        "type": "agent",
+        "agent": "security-reviewer",
+        "task": "You are reviewing a staged implementation in /Users/promisex/Desktop/其他项目/idp-center (Express + TypeScript + Drizzle ORM + PostgreSQL IdP server).\n\nScope: federated identity (phase 2.2).\nFiles to read fully:\n- server/services/identity-link.service.ts\n- server/routes/federation/common.ts\n- server/routes/federation/index.ts\n- server/routes/federation/saml.ts\n- server/routes/federation/oidc-rp.ts\n- server/routes/federation/ldap.ts\n- server/services/ldap.service.ts\n- server/routes/github.ts (was refactored to use identity-link)\n- server/schema.ts (identity_providers, linked_accounts, oauth_states, saml_assertion_ids tables)\n- server/services/crypto.ts\n- server/routes/auth.ts (idps discovery endpoint)\n\nThe plan required:\n1. identity_providers table (tenantId, alias, type, configEnc encrypted via crypto.ts encryptToken, attributeMapping, jitProvisioning, linkByVerifiedEmail, defaultRoles), unique (tenant_id, alias)\n2. identity-link.service.ts generalizing github.ts findOrCreateUserFromGitHub into findOrLinkUser(tenantId, provider, profile, opts) — three-stage: by provider_user_id -> by VERIFIED email -> create with dedup suffix. The old implementation IGNORED tenant_id — this MUST be fixed.\n3. SAML SP: /api/federation/:alias/saml/login (AuthnRequest), /acs (verify signature, InResponseTo, NotOnOrAfter, Audience, replay protection via saml_assertion_ids), /metadata\n4. OIDC RP via openid-client, code+PKCE, state/nonce stored in oauth_states\n5. LDAP via ldapts: service-account search then user bind, pool + 5s timeout + LDAPS\n6. GET /api/auth/idps?tenant_id= discovery for login page; email-domain routing\n\nFor EACH: report DONE / PARTIAL / MISSING with file:line evidence.\n\nThen hunt for real SECURITY BUGS. Check specifically:\n- SAML: is the assertion signature ACTUALLY verified (not just parsed)? Is signature verification on the Assertion or only the Response? XML signature wrapping (XSW) exposure? Is `wantAssertionsSigned`/`wantAuthnResponseSigned` enabled? Is the IdP cert pinned from config? Is InResponseTo checked against a stored request id? Is NotOnOrAfter/NotBefore/Audience checked? Is replay actually prevented (unique constraint / insert-first)? What happens on relayState — open redirect?\n- OIDC RP: is `state` bound to the session/browser and single-use? Is `nonce` verified against the id_token? Is PKCE verifier stored server-side? Is the issuer/audience of the received id_token validated? Open-redirect via redirect_after?\n- LDAP: LDAP injection in the search filter from user-supplied username. Anonymous/unauthenticated bind (empty password = successful bind in LDAP!). Is empty password rejected BEFORE bind? Is TLS verified?\n- identity-link: account takeover via unverified email linking (is `linkByVerifiedEmail` respected AND is the profile email actually verified per-provider?). Is tenant_id used in every lookup and in user creation? Username collision handling. Race conditions on concurrent first login.\n- Is configEnc actually decrypted safely, and are secrets ever returned via the admin API or the /api/auth/idps public discovery endpoint?\n- Is the :alias path parameter used safely (tenant resolution — can a user of tenant A drive a login through tenant B's IdP alias)?\n\nOutput a markdown report: (A) requirement coverage table, (B) findings by severity (Critical/High/Medium/Low), each with file:line, concrete exploit, and fix. Cite line numbers. Do NOT edit files.",
+        "final": false
+      },
+      {
+        "id": "audit-schema",
+        "type": "agent",
+        "agent": "reviewer",
+        "task": "You are reviewing a staged implementation in /Users/promisex/Desktop/其他项目/idp-center (Express + TypeScript + Drizzle ORM + PostgreSQL).\n\nScope: audit logging (phase 2.4) + schema/migration safety + cleanup jobs.\nFiles to read fully:\n- server/utils/audit.ts\n- server/utils/audit-actions.ts\n- server/utils/cleanup.ts\n- server/schema.ts (WHOLE file)\n- server/database.ts\n- server/routes/admin.ts (audit endpoints: verify, export, compliance report)\n- tests/cleanup.test.ts\n\nThe plan required (2.4):\n1. audit_logs indexes: (tenant_id, created_at desc), (user_id, created_at desc), (action)\n2. Unified action naming via server/utils/audit-actions.ts constants, replacing the mixed SCREAMING_SNAKE / admin_snake_case usage EVERYWHERE\n3. Fix tenant loss: many logAudit() calls omitted tenantId and silently fell back to 'default'. New signature logAudit({ req, action, userId?, details?, targetId? }) taking tenant from req.tenantId\n4. Tamper-evidence: prev_hash/hash hash chain + GET /api/admin/audit/verify\n5. Export: GET /api/admin/audit/export?format=csv|jsonl using streaming res.write, NOT loading everything into memory\n6. Retention policy configured in tenants.settings, enforced in cleanup.ts\n7. Compliance report: GET /api/admin/compliance/report?standard=soc2|gdpr\n8. GDPR data export GET /api/user/data-export wired to account_deletion_requests\n\nFor EACH: report DONE / PARTIAL / MISSING with file:line evidence.\n\nThen hunt for BUGS. Check specifically:\n- Hash chain correctness: is prev_hash taken under a lock/transaction? Under concurrent inserts, two rows can read the same prev row and fork the chain, making verify fail permanently. Is the chain per-tenant or global? Does verify handle the genesis row? Can an attacker who can delete rows silently truncate the chain? Are the hashed fields canonical (JSON key order / timestamp precision) so verify is reproducible?\n- Is logAudit awaited or fire-and-forget? Does a failing audit write break the request or silently swallow?\n- Did the refactor to the new logAudit signature actually update ALL call sites? grep for old-style calls and any remaining raw string actions not from audit-actions.ts. List every file:line still using the legacy form.\n- Export: is it truly streaming? Is CSV escaping correct (formula injection, quotes, newlines)? Is there any tenant filter and permission check? Is there a row cap?\n- Retention cleanup: could it delete other tenants' rows? Does it break the hash chain (it will — flag it)?\n- Schema: for every column ADDED to existing tables (clients, access_tokens, refresh_tokens, auth_codes, users), is it nullable or does it have a default? The deploy uses drizzle-kit push, so a NOT NULL column with no default breaks on existing rows. List every violation.\n- Are new indexes declared for the new hot query paths (token_hash lookups, oidc_session lookups, device codes, user_roles)?\n- cleanup.ts: does each new cleanup task have a bounded delete? Any full table scan without index? Any task that can throw and kill the whole interval callback?\n\nOutput a markdown report: (A) requirement coverage table, (B) findings by severity with file:line and fix. Cite line numbers. Do NOT edit files.",
+        "final": false
+      },
+      {
+        "id": "frontend-tests",
+        "type": "agent",
+        "agent": "reviewer",
+        "task": "You are reviewing a staged implementation in /Users/promisex/Desktop/其他项目/idp-center (React 19 + Vite + TanStack Router HASH-routing SPA, plus Vitest tests).\n\nScope: frontend changes + test quality for phase 1 and 2.\nFiles to read fully:\n- src/App.tsx\n- src/pages/Login.tsx\n- src/components/SsoProviderButtons.tsx\n- src/components/GithubOAuthButton.tsx\n- src/pages/admin/IdentityProviders.tsx\n- src/routes/admin/identity-providers.tsx\n- src/layouts/AdminLayout.tsx\n- src/utils/fetch.ts\n- src/components/MfaChallenge.tsx\n- src/components/MfaFactorsManager.tsx\n- tests/integration/rbac.test.ts\n- tests/integration/oidc.test.ts\n- tests/integration/auth.test.ts\n\nContext: the app uses createHashHistory() so URL fragments never reach the server. API success responses use code=0 (see server/utils/response.ts).\n\nCheck and report with file:line evidence:\n1. SSO/federation login button flow: how is the federation login started, is the tenant passed, is there an open-redirect or state leakage through the hash URL? Does App.tsx handle the federation callback like it handles github_code? Any token placed in a URL fragment or localStorage that shouldn't be?\n2. IdentityProviders admin page: does it send/display IdP secrets (client secrets, LDAP bind passwords) in plain text? Does it round-trip a masked secret back to the server and thereby overwrite the real one with asterisks? Validation of the config JSON?\n3. Does the frontend correctly parse the unified response envelope (code === 0) everywhere it was changed? Any place checking `res.ok` only, or reading `data.data` where the server returns raw RFC-shaped OAuth errors?\n4. Any React bugs: missing keys, stale closures, useEffect deps, unhandled promise rejections, race between concurrent fetches, missing loading/error states, uncontrolled->controlled input warnings.\n5. Accessibility/UX basics on the new pages (labels, disabled during submit, double-submit protection).\n\nTEST QUALITY — be harsh here:\n- For tests/integration/rbac.test.ts and tests/integration/oidc.test.ts: do they use describe.skipIf on a DB env var? If the env var is unset in CI, the whole suite silently passes while testing NOTHING. State exactly which suites are skipped without a DB.\n- Do the assertions actually prove the security property, or would they also pass with a broken implementation (e.g. asserting 403 when the endpoint 404s for an unrelated reason, or asserting a field exists without checking its value)?\n- List concrete MISSING test cases for phase 1 (RS256/JWKS/kid rotation, introspect cross-client isolation, revoke cascade, device code slow_down/expiry, PKCE plain vs S256, refresh token family replay, client auth basic/post/jwt) and phase 2 (SCIM cross-tenant, SAML replay, LDAP injection, audit hash chain).\n- Run `pnpm lint` (this is `tsc --noEmit` type checking) in the repo root and report the FULL list of type errors if any. Also run `pnpm vitest run --reporter=basic 2>&1 | tail -60` and report the outcome (a DB may not be available — report that honestly).\n\nOutput a markdown report with (A) findings by severity with file:line, (B) the lint/test command output summary, (C) a prioritized list of missing tests. Do NOT edit files.",
+        "final": false
+      },
+      {
+        "id": "report",
+        "type": "reduce",
+        "from": [
+          "rbac-scim",
+          "federation",
+          "audit-schema",
+          "frontend-tests"
+        ],
+        "agent": "final-arbiter",
+        "dependsOn": [
+          "rbac-scim",
+          "federation",
+          "audit-schema",
+          "frontend-tests"
+        ],
+        "task": "Merge the four review reports below into ONE deduplicated, severity-ordered report.\n\nRules:\n- Drop any finding that is speculative or not backed by a file:line citation.\n- Merge duplicates across reports into a single entry.\n- Order strictly by real-world severity: Critical (auth bypass, cross-tenant data leak, privilege escalation, token forgery) > High > Medium > Low > Nit.\n- For each finding keep: title, file:line, what's wrong, concrete impact, suggested fix (1-3 lines).\n- Keep the requirement-coverage tables, merged into one table per plan section (2.2 / 2.3 / 2.4).\n- End with: (1) the top 5 must-fix-before-merge items, (2) an honest statement of what could NOT be verified.\n\nReports:\n\n{previous.output}",
+        "final": true
+      }
+    ]
+  },
+  "args": {},
+  "status": "failed",
+  "phases": {
+    "__detach__": {
+      "id": "__detach__",
+      "status": "failed",
+      "endedAt": 1786029924122,
+      "error": "Runner module failed to load: '/Users/promisex/.pi/agent/npm/node_modules/pi-taskflow/dist/runner.js' (export 'createPiSubagentRunner'): Cannot find package '@earendil-works/pi-coding-agent' imported from /Users/promisex/.pi/agent/npm/node_modules/pi-taskflow/dist/runner.js"
+    }
+  },
+  "createdAt": 1786029923936,
+  "updatedAt": 1786029924122,
+  "cwd": "/Users/promisex/Desktop/其他项目/idp-center",
+  "invocationRootSnapshot": {
+    "canonicalPath": "/Users/promisex/Desktop/其他项目/idp-center",
+    "device": "16777232",
+    "inode": "34401580"
+  },
+  "host": "pi",
+  "packageVersion": "0.2.6",
+  "gitCommit": "3c2dfdba9678673b8f18305b4533f8f3a62c1d1b",
+  "schemaVersion": 1,
+  "detached": true,
+  "detachedStartedAt": 1786029923936,
+  "detachedControlVersion": 1,
+  "detachedInstanceId": "426edacf-b97d-4b43-9d59-294e8659276a",
+  "detachedRetention": {
+    "maxKeep": 100,
+    "maxAgeDays": 30
+  },
+  "pid": 11565
+}
