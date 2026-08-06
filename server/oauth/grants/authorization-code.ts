@@ -2,10 +2,11 @@ import crypto from 'crypto';
 import { and, eq } from 'drizzle-orm';
 import { db } from '../../database.js';
 import { TOKEN_CONFIG } from '../../config.js';
-import { authCodes, users, oidcSessions } from '../../schema.js';
+import { authCodes, users, oidcSessions, accessTokens, refreshTokens } from '../../schema.js';
 import { OAuthError } from '../errors.js';
 import { issueAccessToken, issueRefreshToken, issueIdToken } from '../issue.js';
 import { verifyDpopProof } from '../dpop.js';
+import { RevokeReason } from '../../utils/token-blacklist.js';
 import type { GrantContext, GrantHandler, TokenResponse } from '../types.js';
 
 function verifyPkce(method: string, verifier: string, challenge: string): boolean {
@@ -14,6 +15,21 @@ function verifyPkce(method: string, verifier: string, challenge: string): boolea
     return crypto.createHash('sha256').update(verifier).digest('base64url') === challenge;
   }
   return false;
+}
+
+/**
+ * A replayed authorization code means the code leaked. RFC 6749 §4.1.2 / OAuth 2.1
+ * §4.1.3: revoke everything the code previously minted.
+ */
+async function revokeTokensFromAuthCode(authCodeId: string): Promise<void> {
+  await db
+    .update(accessTokens)
+    .set({ revoked: true, revokedAt: new Date(), revokeReason: RevokeReason.SECURITY_BREACH })
+    .where(and(eq(accessTokens.authCodeId, authCodeId), eq(accessTokens.revoked, false)));
+  await db
+    .update(refreshTokens)
+    .set({ revoked: true })
+    .where(and(eq(refreshTokens.authCodeId, authCodeId), eq(refreshTokens.revoked, false)));
 }
 
 export const authorizationCodeGrant: GrantHandler = {
@@ -42,7 +58,19 @@ export const authorizationCodeGrant: GrantHandler = {
       ))
       .returning();
 
-    if (!authCode || authCode.expiresAt < new Date()) {
+    if (!authCode) {
+      // The code may exist but already be consumed — that is a replay, and every
+      // token it previously issued must die with it.
+      const [replayed] = await db
+        .select({ id: authCodes.id })
+        .from(authCodes)
+        .where(and(eq(authCodes.code, code), eq(authCodes.tenantId, tenantId), eq(authCodes.used, true)))
+        .limit(1);
+      if (replayed) await revokeTokensFromAuthCode(replayed.id);
+      throw new OAuthError('invalid_grant', 400, 'Invalid or expired code');
+    }
+
+    if (authCode.expiresAt < new Date()) {
       throw new OAuthError('invalid_grant', 400, 'Invalid or expired code');
     }
 
@@ -58,6 +86,7 @@ export const authorizationCodeGrant: GrantHandler = {
 
     const [user] = await db.select().from(users).where(eq(users.id, authCode.userId)).limit(1);
     if (!user) throw new OAuthError('invalid_grant', 400, 'User not found');
+    if (!user.isActive) throw new OAuthError('invalid_grant', 400, 'User account is disabled');
 
     const oidcSession = authCode.sid
       ? (await db.select().from(oidcSessions).where(and(eq(oidcSessions.sid, authCode.sid), eq(oidcSessions.tenantId, tenantId))).limit(1))[0]
@@ -69,8 +98,8 @@ export const authorizationCodeGrant: GrantHandler = {
 
     const scope = authCode.scope || 'openid';
     const authCtx = { amr: oidcSession?.amr, acr: oidcSession?.acr };
-    const { token: accessToken } = await issueAccessToken(user, client.clientId, scope, tenantId, oidcSession?.id, jkt ? { jkt } : undefined, authCtx);
-    const { token: refreshToken } = await issueRefreshToken({ userId: user.id, clientId: client.clientId, tenantId, scope, oidcSessionId: oidcSession?.id });
+    const { token: accessToken } = await issueAccessToken(user, client.clientId, scope, tenantId, oidcSession?.id, jkt ? { jkt } : undefined, authCtx, authCode.id);
+    const { token: refreshToken } = await issueRefreshToken({ userId: user.id, clientId: client.clientId, tenantId, scope, oidcSessionId: oidcSession?.id, authCodeId: authCode.id });
     const idToken = await issueIdToken(user, { clientId: client.clientId, scope, nonce: authCode.nonce, sid: oidcSession?.sid, authTime: oidcSession?.authTime, ...authCtx });
 
     return {
@@ -78,6 +107,7 @@ export const authorizationCodeGrant: GrantHandler = {
       refresh_token: refreshToken,
       token_type: jkt ? 'DPoP' : 'Bearer',
       expires_in: TOKEN_CONFIG.accessTokenExpirySeconds,
+      scope,
       id_token: idToken,
       user: {
         id: user.id,

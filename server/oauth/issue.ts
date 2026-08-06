@@ -1,38 +1,38 @@
 import crypto from 'crypto';
-import jwt from 'jsonwebtoken';
 import { db } from '../database.js';
-import { config, TOKEN_CONFIG } from '../config.js';
+import { TOKEN_CONFIG } from '../config.js';
 import { accessTokens, refreshTokens, users } from '../schema.js';
 import { getUserRoleNames, getUserGroupNames } from '../services/rbac.service.js';
+import { signAccessToken, signIdToken } from './jwt.js';
 
 type UserRow = typeof users.$inferSelect;
 
 /**
- * Single signing entrypoint for OAuth access/id tokens. Still HS256 via
- * jsonwebtoken (server/oauth/jwt.ts's RS256 signer takes over at Deploy B —
- * ENTERPRISE-OAUTH-IMPLEMENTATION-PLAN.md §1.1 release B).
+ * Issues an RS256-signed access token (Deploy B — ENTERPRISE-OAUTH-IMPLEMENTATION-PLAN.md §1.1).
+ * The token is signed via server/oauth/jwt.ts and persisted to access_tokens with its SHA-256 hash.
  */
-export async function issueAccessToken(user: UserRow, clientId: string, scope: string, tenantId: string, oidcSessionId?: string, cnf?: { jkt: string }, authCtx?: { amr?: string | null; acr?: string | null }): Promise<{ token: string; expiresAt: Date }> {
+export async function issueAccessToken(user: UserRow, clientId: string, scope: string, tenantId: string, oidcSessionId?: string, cnf?: { jkt: string }, authCtx?: { amr?: string | null; acr?: string | null }, authCodeId?: string): Promise<{ token: string; expiresAt: Date }> {
   // Field names must match JwtUserPayload (server/types/index.ts) — authenticateAdmin
   // and other consumers read req.user.is_admin / req.user.tenant_id, not camelCase.
-  const payload: Record<string, any> = { id: user.id, username: user.username, is_admin: user.isAdmin, tenant_id: user.tenantId, jti: crypto.randomUUID() };
+  const payload: Record<string, any> = { id: user.id, username: user.username, is_admin: user.isAdmin, tenant_id: user.tenantId };
   if (cnf) payload.cnf = cnf;
   if (authCtx?.amr) payload.amr = authCtx.amr.split(',');
   if (authCtx?.acr) payload.acr = authCtx.acr;
-  const token = jwt.sign(
-    payload,
-    config.JWT_SECRET,
-    { expiresIn: TOKEN_CONFIG.accessTokenExpiry }
-  );
+  
+  const token = await signAccessToken(payload, { expiresInSec: TOKEN_CONFIG.accessTokenExpirySeconds });
   const expiresAt = new Date(Date.now() + TOKEN_CONFIG.accessTokenExpiryMs);
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  
   await db.insert(accessTokens).values({
     id: crypto.randomUUID(),
     token,
+    tokenHash,
     clientId,
     userId: user.id,
     tenantId,
     subjectType: 'user',
     oidcSessionId: oidcSessionId ?? null,
+    authCodeId: authCodeId ?? null,
     expiresAt,
     scope,
   });
@@ -45,17 +45,17 @@ export async function issueAccessToken(user: UserRow, clientId: string, scope: s
  * so writing client_id there is valid — token-blacklist.ts needs no changes.
  */
 export async function issueClientAccessToken(clientId: string, scope: string, tenantId: string, cnf?: { jkt: string }): Promise<{ token: string; expiresAt: Date }> {
-  const payload: Record<string, any> = { sub: clientId, client_id: clientId, sub_type: 'client', tenant_id: tenantId, scope, jti: crypto.randomUUID() };
+  const payload: Record<string, any> = { sub: clientId, client_id: clientId, sub_type: 'client', tenant_id: tenantId, scope };
   if (cnf) payload.cnf = cnf;
-  const token = jwt.sign(
-    payload,
-    config.JWT_SECRET,
-    { expiresIn: TOKEN_CONFIG.accessTokenExpiry }
-  );
+  
+  const token = await signAccessToken(payload, { expiresInSec: TOKEN_CONFIG.accessTokenExpirySeconds });
   const expiresAt = new Date(Date.now() + TOKEN_CONFIG.accessTokenExpiryMs);
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  
   await db.insert(accessTokens).values({
     id: crypto.randomUUID(),
     token,
+    tokenHash,
     clientId,
     userId: clientId,
     tenantId,
@@ -74,6 +74,7 @@ export async function issueRefreshToken(opts: {
   familyId?: string;
   rememberMe?: boolean;
   oidcSessionId?: string;
+  authCodeId?: string;
 }): Promise<{ token: string; expiresAt: Date; familyId: string }> {
   const token = crypto.randomBytes(32).toString('hex');
   const expiresMs = opts.rememberMe ? TOKEN_CONFIG.refreshTokenRememberMeMs : TOKEN_CONFIG.refreshTokenExpiryMs;
@@ -87,6 +88,7 @@ export async function issueRefreshToken(opts: {
     clientId: opts.clientId,
     tenantId: opts.tenantId,
     oidcSessionId: opts.oidcSessionId ?? null,
+    authCodeId: opts.authCodeId ?? null,
     expiresAt,
     scope: opts.scope,
     familyId,
@@ -98,11 +100,7 @@ export async function issueRefreshToken(opts: {
 
 export async function issueIdToken(user: UserRow, opts: { clientId: string; scope: string; nonce?: string | null; sid?: string; authTime?: Date; amr?: string | null; acr?: string | null }): Promise<string> {
   const payload: Record<string, any> = {
-    iss: config.APP_URL,
     sub: user.id,
-    aud: opts.clientId,
-    exp: Math.floor(Date.now() / 1000) + TOKEN_CONFIG.accessTokenExpirySeconds,
-    iat: Math.floor(Date.now() / 1000),
   };
   if (opts.nonce) payload.nonce = opts.nonce;
   if (opts.sid) payload.sid = opts.sid;
@@ -117,5 +115,6 @@ export async function issueIdToken(user: UserRow, opts: { clientId: string; scop
   const tenantId = user.tenantId || 'default';
   if (opts.scope.includes('roles')) payload.roles = await getUserRoleNames(user.id, tenantId);
   if (opts.scope.includes('groups')) payload.groups = await getUserGroupNames(user.id, tenantId);
-  return jwt.sign(payload, config.JWT_SECRET);
+  
+  return signIdToken(payload, { audience: opts.clientId, expiresInSec: TOKEN_CONFIG.accessTokenExpirySeconds });
 }

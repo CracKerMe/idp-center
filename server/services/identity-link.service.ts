@@ -4,8 +4,9 @@ import jwt from 'jsonwebtoken';
 import type express from 'express';
 import { and, eq, isNull } from 'drizzle-orm';
 import { db } from '../database.js';
-import { config } from '../config.js';
+import { config, TOKEN_CONFIG } from '../config.js';
 import { encryptToken } from './crypto.js';
+import { signAccessToken } from '../oauth/jwt.js';
 import { users, linkedAccounts, accessTokens, sessions, refreshTokens, authCodes } from '../schema.js';
 import { assignRoleToUser } from './rbac.service.js';
 
@@ -146,15 +147,15 @@ interface MintedTokens {
 /** Shared token/session minting for every federated login path (redirect-based or direct-form). */
 async function mintTokensForUser(user: UserRow, req: express.Request): Promise<MintedTokens> {
   const tenantId = user.tenantId || 'default';
-  const accessToken = jwt.sign(
+  const accessToken = await signAccessToken(
     { id: user.id, username: user.username, is_admin: user.isAdmin, tenant_id: tenantId },
-    config.JWT_SECRET,
-    { expiresIn: '15m' }
+    { expiresInSec: TOKEN_CONFIG.accessTokenExpirySeconds }
   );
-  const accessExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
+  const accessExpiresAt = new Date(Date.now() + TOKEN_CONFIG.accessTokenExpiryMs);
   await db.insert(accessTokens).values({
     id: crypto.randomUUID(),
     token: accessToken,
+    tokenHash: crypto.createHash('sha256').update(accessToken).digest('hex'),
     clientId: 'system',
     userId: user.id,
     tenantId,

@@ -27,6 +27,33 @@ const router = express.Router();
 
 const SUPPORTED_CODE_CHALLENGE_METHODS = new Set(['S256', 'plain']);
 
+/** Registered redirect URIs must match exactly; parseList tolerates both the JSON-array and comma-string formats. */
+function registeredRedirectUris(client: { redirectUris: string | null }): string[] {
+  return parseList(client.redirectUris);
+}
+
+/**
+ * clients.grant_types is the single authorization gate for which flows a client may
+ * start. Enforced at /authorize and /device_authorization as well as /token, so a
+ * client can't begin a flow it could never complete (plan §1.2).
+ */
+function assertGrantAllowed(grantTypes: string[], required: string, clientId: string): void {
+  if (grantTypes.includes(required)) return;
+  if (config.OAUTH_ENFORCE_GRANT_TYPES) {
+    throw new OAuthError('unauthorized_client', 400, `Client is not authorized for grant_type ${required}`);
+  }
+  console.warn(`[oauth] client ${clientId} started a flow requiring grant_type "${required}" not in its grant_types (warn-only)`);
+}
+
+/** Requested scopes are narrowed to the client's allowed_scopes when that column is set. */
+function narrowScope(requested: string | undefined | null, allowedRaw: string | null): string {
+  const requestedScopes = (requested || 'openid').trim().split(/\s+/).filter(Boolean);
+  const allowed = parseList(allowedRaw);
+  if (allowed.length === 0) return requestedScopes.join(' ') || 'openid';
+  const granted = requestedScopes.filter((s) => allowed.includes(s));
+  return granted.join(' ');
+}
+
 // Consonants only (no vowels, no 0/O/1/I) — avoids accidentally spelling words
 // and characters that are easy to misread when a user types the code by hand.
 const USER_CODE_CHARSET = 'BCDFGHJKLMNPQRSTVWXZ';
@@ -67,10 +94,7 @@ router.get('/authorize', async (req, res) => {
   const [client] = await db.select().from(clients).where(and(eq(clients.clientId, client_id as string), eq(clients.tenantId, tenantId))).limit(1);
   if (!client) return res.status(400).json(error('Invalid client_id for this tenant', ErrorCode.VALIDATION_ERROR));
 
-  const rawUris = client.redirectUris || '';
-  const registeredUris: string[] = rawUris.startsWith('[')
-    ? JSON.parse(rawUris)
-    : rawUris.split(',').map((u: string) => u.trim()).filter(Boolean);
+  const registeredUris = registeredRedirectUris(client);
   if (!redirect_uri || !registeredUris.includes(redirect_uri as string)) {
     return res.status(400).json(error('Invalid redirect_uri', ErrorCode.VALIDATION_ERROR));
   }
@@ -105,10 +129,15 @@ router.post('/authorize', authenticateToken, async (req, res) => {
   const [client] = await db.select().from(clients).where(and(eq(clients.clientId, client_id), eq(clients.tenantId, tenantId))).limit(1);
   if (!client) return res.status(400).json(error('Invalid client_id for this tenant', ErrorCode.VALIDATION_ERROR));
 
-  const rawUris = client.redirectUris || '';
-  const registeredUris: string[] = rawUris.startsWith('[')
-    ? JSON.parse(rawUris)
-    : rawUris.split(',').map((u: string) => u.trim()).filter(Boolean);
+  // response_type=code implies the authorization_code grant — enforce it here so a
+  // client that could never redeem the code cannot obtain one.
+  try {
+    assertGrantAllowed(parseList(client.grantTypes), 'authorization_code', client.clientId);
+  } catch (err) {
+    return sendOAuthError(res, err);
+  }
+
+  const registeredUris = registeredRedirectUris(client);
   if (!redirect_uri || !registeredUris.includes(redirect_uri as string)) {
     return res.status(400).json(error('Invalid redirect_uri', ErrorCode.VALIDATION_ERROR));
   }
@@ -128,7 +157,10 @@ router.post('/authorize', authenticateToken, async (req, res) => {
 
   const code = crypto.randomBytes(16).toString('hex');
   const expiresAt = new Date(Date.now() + 10 * 60000);
-  const authScope = scope || 'openid';
+  const authScope = narrowScope(scope, client.allowedScopes);
+  if (!authScope) {
+    return res.status(400).json(error('No requested scope is allowed for this client', ErrorCode.VALIDATION_ERROR));
+  }
 
   // Falls back to the user id when the bearer token has no bsid (e.g. minted by
   // /api/auth/refresh, which doesn't carry one yet) — degrades to per-user rather
@@ -227,10 +259,32 @@ router.post('/token', async (req, res) => {
 router.get('/userinfo', async (req, res) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
-  if (!token) return res.status(401).json(error('Missing authorization token', ErrorCode.AUTH_UNAUTHORIZED));
+  if (!token) {
+    res.set('WWW-Authenticate', 'Bearer');
+    return res.status(401).json(error('Missing authorization token', ErrorCode.AUTH_UNAUTHORIZED));
+  }
 
-  const [accessToken] = await db.select().from(accessTokens).where(and(eq(accessTokens.token, token), eq(accessTokens.revoked, false))).limit(1);
-  if (!accessToken || new Date(accessToken.expiresAt) < new Date()) return res.status(401).json(error('Invalid or expired access token', ErrorCode.TOKEN_EXPIRED));
+  // The DB row is authoritative for revocation/expiry, but the signature must also
+  // verify — otherwise any string that happens to collide with a stored hash would pass.
+  try {
+    await verifyInternalJwt(token);
+  } catch {
+    res.set('WWW-Authenticate', 'Bearer error="invalid_token"');
+    return res.status(401).json(error('Invalid access token', ErrorCode.TOKEN_INVALID));
+  }
+
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  const [accessToken] = await db.select().from(accessTokens).where(and(eq(accessTokens.tokenHash, tokenHash), eq(accessTokens.revoked, false))).limit(1);
+  if (!accessToken || new Date(accessToken.expiresAt) < new Date()) {
+    res.set('WWW-Authenticate', 'Bearer error="invalid_token"');
+    return res.status(401).json(error('Invalid or expired access token', ErrorCode.TOKEN_EXPIRED));
+  }
+
+  // Machine tokens (client_credentials) have no user identity — userinfo is undefined for them.
+  if (accessToken.subjectType === 'client') {
+    res.set('WWW-Authenticate', 'Bearer error="invalid_token"');
+    return res.status(401).json(error('Machine tokens have no userinfo', ErrorCode.TOKEN_INVALID));
+  }
 
   const [user] = await db.select({
     id: users.id,
@@ -276,7 +330,11 @@ router.delete('/register/:client_id', handleRegistrationDelete);
 router.post('/device_authorization', async (req, res) => {
   try {
     const client = await authenticateClient(req);
-    const scope = typeof req.body?.scope === 'string' && req.body.scope.trim() ? req.body.scope.trim() : 'openid';
+    assertGrantAllowed(client.grantTypes, 'urn:ietf:params:oauth:grant-type:device_code', client.clientId);
+
+    const requestedScope = typeof req.body?.scope === 'string' && req.body.scope.trim() ? req.body.scope.trim() : 'openid';
+    const scope = narrowScope(requestedScope, client.row.allowedScopes);
+    if (!scope) throw new OAuthError('invalid_scope', 400, 'No requested scope is allowed for this client');
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
     const deviceCode = crypto.randomBytes(32).toString('hex');
@@ -385,6 +443,7 @@ router.all('/end_session', async (req, res) => {
   const idTokenHint = typeof params.id_token_hint === 'string' ? params.id_token_hint : undefined;
   const requestedRedirect = typeof params.post_logout_redirect_uri === 'string' ? params.post_logout_redirect_uri : undefined;
   const state = typeof params.state === 'string' ? params.state : undefined;
+  const tenantId = req.tenantId;
 
   let sid: string | undefined;
   let clientId: string | undefined;
@@ -393,11 +452,19 @@ router.all('/end_session', async (req, res) => {
   if (idTokenHint) {
     try {
       const payload = await verifyInternalJwt(idTokenHint, { ignoreExpiration: true });
+      // The hint must be an id_token this server issued for this tenant — otherwise a
+      // token from another tenant could name a redirect target registered elsewhere.
+      if (payload.iss !== config.APP_URL) throw new Error('issuer mismatch');
+
       sid = typeof payload.sid === 'string' ? payload.sid : undefined;
-      clientId = typeof payload.aud === 'string' ? payload.aud : undefined;
+      clientId = typeof payload.aud === 'string' ? payload.aud : Array.isArray(payload.aud) && typeof payload.aud[0] === 'string' ? payload.aud[0] : undefined;
 
       if (clientId && requestedRedirect) {
-        const [client] = await db.select({ postLogoutRedirectUris: clients.postLogoutRedirectUris }).from(clients).where(eq(clients.clientId, clientId)).limit(1);
+        const [client] = await db
+          .select({ postLogoutRedirectUris: clients.postLogoutRedirectUris })
+          .from(clients)
+          .where(and(eq(clients.clientId, clientId), eq(clients.tenantId, tenantId)))
+          .limit(1);
         if (parseList(client?.postLogoutRedirectUris).includes(requestedRedirect)) {
           validatedRedirect = requestedRedirect;
         }
@@ -454,7 +521,25 @@ router.post('/end_session/confirm', authenticateToken, async (req, res) => {
 
   await logAudit({ req, action: AuditAction.OAUTH_END_SESSION, userId: req.user!.id, details: `Terminated ${liveSessions.length} OIDC session(s)`, tenantId: tenantId });
 
-  const postLogoutRedirectUri = typeof req.body?.post_logout_redirect_uri === 'string' ? req.body.post_logout_redirect_uri : null;
+  // The redirect target must be re-validated here: end_session validated it against the
+  // id_token_hint's client, but this POST is a separate request the SPA controls.
+  const requested = typeof req.body?.post_logout_redirect_uri === 'string' ? req.body.post_logout_redirect_uri : null;
+  let postLogoutRedirectUri: string | null = null;
+  if (requested) {
+    const clientIds = [...new Set(liveSessions.map((s) => s.clientId))];
+    for (const cid of clientIds) {
+      const [c] = await db
+        .select({ postLogoutRedirectUris: clients.postLogoutRedirectUris })
+        .from(clients)
+        .where(and(eq(clients.clientId, cid), eq(clients.tenantId, tenantId)))
+        .limit(1);
+      if (parseList(c?.postLogoutRedirectUris).includes(requested)) {
+        postLogoutRedirectUri = requested;
+        break;
+      }
+    }
+  }
+
   res.json(success({ front_channel_logout_uris: frontChannelLogoutUris, post_logout_redirect_uri: postLogoutRedirectUri }));
 });
 

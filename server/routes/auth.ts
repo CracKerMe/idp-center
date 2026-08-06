@@ -17,6 +17,7 @@ import { validate } from '../middleware/validate.js';
 import { success, error, message, ErrorCode, ApiResponse } from '../utils/response.js';
 import { revokeToken, revokeAllUserTokens, RevokeReason } from '../utils/token-blacklist.js';
 import { loginAttempts, mfaChallenge, mfaVerify } from '../utils/metrics.js';
+import { signAccessToken } from '../oauth/jwt.js';
 import { users, accessTokens, refreshTokens, sessions, emailVerifications, passwordResets, trustedDevices, accountDeletionRequests, mfaFactors, authCodes, identityProviders } from '../schema.js';
 import { eq, and, gt, inArray, desc } from 'drizzle-orm';
 import {
@@ -34,6 +35,8 @@ import {
 } from '../validators/auth.validator.js';
 
 type UserRow = typeof users.$inferSelect;
+
+const sha256 = (data: string) => crypto.createHash('sha256').update(data).digest('hex');
 
 const mfaChallengeSchema = z.object({
   mfa_token: z.string().min(1),
@@ -89,15 +92,15 @@ async function completeLogin(user: UserRow, req: express.Request, opts: {
 
   const sessionId = crypto.randomUUID();
 
-  const accessToken = jwt.sign(
-    { id: user.id, username: user.username, is_admin: user.isAdmin, tenant_id: user.tenantId, bsid: sessionId, jti: crypto.randomUUID(), amr: opts.amr, acr },
-    config.JWT_SECRET,
-    { expiresIn: TOKEN_CONFIG.accessTokenExpiry }
+  const accessToken = await signAccessToken(
+    { id: user.id, username: user.username, is_admin: user.isAdmin, tenant_id: user.tenantId, bsid: sessionId, amr: opts.amr, acr },
+    { expiresInSec: TOKEN_CONFIG.accessTokenExpirySeconds }
   );
   const accessExpiresAt = new Date(Date.now() + TOKEN_CONFIG.accessTokenExpiryMs);
   await db.insert(accessTokens).values({
     id: crypto.randomUUID(),
     token: accessToken,
+    tokenHash: sha256(accessToken),
     clientId: 'system',
     userId: user.id,
     tenantId,
@@ -141,6 +144,8 @@ async function completeLogin(user: UserRow, req: express.Request, opts: {
     id: crypto.randomUUID(),
     token: refreshToken,
     userId: user.id,
+    tenantId,
+    sessionId,
     expiresAt: refreshExpiresAt,
     rememberMe: opts.remember_me,
     deviceId,
@@ -743,11 +748,11 @@ router.post('/refresh', validate({ body: tokenRefreshSchema }), async (req, res)
     });
   }
 
-  // Sign new access token
-  const accessToken = jwt.sign(
-    { id: user.id, username: user.username, is_admin: user.isAdmin, tenant_id: user.tenantId, jti: crypto.randomUUID() },
-    config.JWT_SECRET,
-    { expiresIn: TOKEN_CONFIG.accessTokenExpiry }
+  // Sign new access token. The refreshed token keeps the browser session id so
+  // /authorize can still group OIDC sessions per browser after a silent refresh.
+  const accessToken = await signAccessToken(
+    { id: user.id, username: user.username, is_admin: user.isAdmin, tenant_id: user.tenantId, ...(storedToken.sessionId ? { bsid: storedToken.sessionId } : {}) },
+    { expiresInSec: TOKEN_CONFIG.accessTokenExpirySeconds }
   );
   const accessExpiresAt = new Date(Date.now() + TOKEN_CONFIG.accessTokenExpiryMs);
   // isTokenRevoked() is fail-closed (no row = revoked), so the new access token must be
@@ -755,6 +760,7 @@ router.post('/refresh', validate({ body: tokenRefreshSchema }), async (req, res)
   await db.insert(accessTokens).values({
     id: crypto.randomUUID(),
     token: accessToken,
+    tokenHash: sha256(accessToken),
     clientId: storedToken.clientId || 'system',
     userId: user.id,
     tenantId: user.tenantId || 'default',
@@ -771,6 +777,8 @@ router.post('/refresh', validate({ body: tokenRefreshSchema }), async (req, res)
     token: newRefreshToken,
     userId: user.id,
     clientId: storedToken.clientId,
+    tenantId: user.tenantId || 'default',
+    sessionId: storedToken.sessionId,
     expiresAt: newExpiresAt,
     rememberMe: storedToken.rememberMe || false,
   });

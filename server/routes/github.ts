@@ -2,10 +2,11 @@ import express from 'express';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { db } from '../database.js';
-import { config } from '../config.js';
+import { config, TOKEN_CONFIG } from '../config.js';
 import { logAudit } from '../utils/audit.js';
 import { AuditAction } from '../utils/audit-actions.js';
 import { generateOAuthState } from '../services/crypto.js';
+import { signAccessToken } from '../oauth/jwt.js';
 import { findOrLinkUser } from '../services/identity-link.service.js';
 import { success, error, ErrorCode } from '../utils/response.js';
 import { users, oauthStates, accessTokens, sessions, refreshTokens, authCodes } from '../schema.js';
@@ -176,15 +177,15 @@ router.get('/callback', async (req, res) => {
     return res.redirect(302, `/#/login?error=${encodeURIComponent('Failed to complete GitHub login')}`);
   }
 
-  const accessToken = jwt.sign(
+  const accessToken = await signAccessToken(
     { id: user.id, username: user.username, is_admin: user.isAdmin, tenant_id: user.tenantId },
-    config.JWT_SECRET,
-    { expiresIn: '15m' }
+    { expiresInSec: TOKEN_CONFIG.accessTokenExpirySeconds }
   );
-  const accessExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
+  const accessExpiresAt = new Date(Date.now() + TOKEN_CONFIG.accessTokenExpiryMs);
   await db.insert(accessTokens).values({
     id: crypto.randomUUID(),
     token: accessToken,
+    tokenHash: crypto.createHash('sha256').update(accessToken).digest('hex'),
     clientId: 'system',
     userId: user.id,
     tenantId: user.tenantId || 'default',

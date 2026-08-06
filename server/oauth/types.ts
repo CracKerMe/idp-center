@@ -14,6 +14,7 @@ export interface AuthenticatedClient {
   tenantId: string;
   authMethod: ClientAuthMethod;
   grantTypes: string[];
+  allowedScopes: string[];
 }
 
 export interface GrantContext {

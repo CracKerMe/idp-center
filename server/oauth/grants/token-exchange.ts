@@ -35,6 +35,10 @@ export const tokenExchangeGrant: GrantHandler = {
     if (!resolved || resolved.kind !== 'access' || resolved.row.revoked || resolved.row.expiresAt < new Date()) {
       throw new OAuthError('invalid_grant', 400, 'subject_token is invalid, expired, or revoked');
     }
+    // Machine tokens have no user subject; exchanging them would resolve a bogus user row.
+    if (resolved.row.subjectType === 'client') {
+      throw new OAuthError('invalid_grant', 400, 'Machine tokens cannot be exchanged');
+    }
 
     const requestedAudience = typeof params.audience === 'string' ? params.audience : undefined;
     const allowedAudiences = parseList(client.row.allowedAudiences);
@@ -44,8 +48,25 @@ export const tokenExchangeGrant: GrantHandler = {
 
     const [user] = await db.select().from(users).where(eq(users.id, resolved.row.userId)).limit(1);
     if (!user) throw new OAuthError('invalid_grant', 400, 'Subject token user not found');
+    if (!user.isActive) throw new OAuthError('invalid_grant', 400, 'Subject token user is disabled');
 
-    const scope = typeof params.scope === 'string' && params.scope.trim() ? params.scope.trim() : resolved.row.scope || 'openid';
+    // RFC 8693: the exchanged token must never be MORE privileged than the subject
+    // token. Requested scopes are intersected with both the subject token's scopes
+    // and the requesting client's allowed_scopes — never taken verbatim.
+    const subjectScopes = (resolved.row.scope || 'openid').split(/\s+/).filter(Boolean);
+    const requested = typeof params.scope === 'string' && params.scope.trim()
+      ? params.scope.trim().split(/\s+/).filter(Boolean)
+      : subjectScopes;
+
+    let granted = requested.filter((s) => subjectScopes.includes(s));
+    if (client.allowedScopes.length > 0) {
+      granted = granted.filter((s) => client.allowedScopes.includes(s));
+    }
+    if (granted.length === 0) {
+      throw new OAuthError('invalid_scope', 400, 'No requested scope is granted by the subject token');
+    }
+    const scope = granted.join(' ');
+
     const { token: accessToken } = await issueAccessToken(user, requestedAudience, scope, tenantId);
 
     return {

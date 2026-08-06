@@ -41,6 +41,8 @@ export const clients = pgTable('clients', {
   id: text('id').primaryKey(),
   clientId: text('client_id').notNull().unique(),
   clientSecret: text('client_secret').notNull(),
+  clientSecretHash: text('client_secret_hash'),
+  clientSecretAlg: text('client_secret_alg'),
   clientName: text('client_name').notNull(),
   redirectUris: text('redirect_uris').notNull(),
   grantTypes: text('grant_types').notNull(),
@@ -56,7 +58,9 @@ export const clients = pgTable('clients', {
   allowedAudiences: text('allowed_audiences'),
   registrationTokenHash: text('registration_token_hash'),
   createdAt: timestamp('created_at').defaultNow(),
-});
+}, (t) => [
+  index('idx_clients_tenant').on(t.tenantId),
+]);
 
 export const authCodes = pgTable('auth_codes', {
   id: text('id').primaryKey(),
@@ -77,18 +81,25 @@ export const authCodes = pgTable('auth_codes', {
 export const accessTokens = pgTable('access_tokens', {
   id: text('id').primaryKey(),
   token: text('token').notNull().unique(),
+  tokenHash: text('token_hash'),
   clientId: text('client_id').notNull(),
   userId: text('user_id').notNull(),
   tenantId: text('tenant_id').notNull().default('default'),
   subjectType: text('subject_type').notNull().default('user'), // 'user' | 'client'
   oidcSessionId: text('oidc_session_id'),
+  authCodeId: text('auth_code_id'),
   expiresAt: timestamp('expires_at').notNull(),
   revoked: boolean('revoked').default(false),
   createdAt: timestamp('created_at').defaultNow(),
   scope: text('scope').default('openid'),
   revokedAt: timestamp('revoked_at'),
   revokeReason: text('revoke_reason'),
-});
+}, (t) => [
+  index('idx_access_tokens_hash').on(t.tokenHash),
+  index('idx_access_tokens_session').on(t.oidcSessionId),
+  index('idx_access_tokens_auth_code').on(t.authCodeId),
+  index('idx_access_tokens_user').on(t.userId),
+]);
 
 export const refreshTokens = pgTable('refresh_tokens', {
   id: text('id').primaryKey(),
@@ -99,12 +110,18 @@ export const refreshTokens = pgTable('refresh_tokens', {
   scope: text('scope').default('openid'),
   familyId: text('family_id'),
   oidcSessionId: text('oidc_session_id'),
+  authCodeId: text('auth_code_id'),
+  sessionId: text('session_id'),
   expiresAt: timestamp('expires_at').notNull(),
   revoked: boolean('revoked').default(false),
   createdAt: timestamp('created_at').defaultNow(),
   rememberMe: boolean('remember_me').default(false),
   deviceId: text('device_id'),
-});
+}, (t) => [
+  index('idx_refresh_tokens_family').on(t.familyId),
+  index('idx_refresh_tokens_session').on(t.oidcSessionId),
+  index('idx_refresh_tokens_auth_code').on(t.authCodeId),
+]);
 
 export const sessions = pgTable('sessions', {
   id: text('id').primaryKey(),

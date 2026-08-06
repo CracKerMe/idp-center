@@ -84,6 +84,11 @@ export async function authenticateLdap(cfg: LdapIdpConfig, username: string, pas
   if (!found) return null;
   const userDN = found.dn;
 
+  // An empty or absent password MUST be rejected before binding — in LDAP an empty
+  // password triggers anonymous auth which returns success, silently bypassing
+  // the actual credential check (OWASP: Authentication Bypass via LDAP Anonymous Bind).
+  if (!password || password.length === 0) return null;
+
   // A failed bind throws — that's the actual "wrong password" signal.
   const passwordOk = await withClient(cfg.url, timeoutMs, async (client) => {
     try {

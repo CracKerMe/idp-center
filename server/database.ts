@@ -7,8 +7,8 @@ import { promisify } from 'util';
 
 import { connectionString } from './config.js';
 import * as schema from './schema.js';
-import { users, tenants, clients } from './schema.js';
-import { eq } from 'drizzle-orm';
+import { users, tenants, clients, accessTokens } from './schema.js';
+import { eq, isNull, sql } from 'drizzle-orm';
 import { ensureKeysInitialized } from './services/keys.service.js';
 import { migrateLegacyTotpFactors } from './services/mfa.service.js';
 import { migrateLegacyAdminsToRoles } from './services/rbac.service.js';
@@ -40,10 +40,44 @@ export async function initDatabase() {
   }
 
   await seedDefaults();
+  await backfillAccessTokenHashes();
   await ensureKeysInitialized();
   await migrateLegacyTotpFactors();
   await migrateLegacyAdminsToRoles();
   await migrateLegacyLinkedAccounts();
+}
+
+/**
+ * Backfills access_tokens.token_hash for rows written before hash-based lookup
+ * existed. This MUST run in the same release that switches introspect/revoke/
+ * userinfo to hash lookups (ENTERPRISE-OAUTH-IMPLEMENTATION-PLAN.md §1.2), or
+ * every already-issued token becomes unresolvable and fails closed.
+ */
+async function backfillAccessTokenHashes(): Promise<void> {
+  try {
+    // sha256(token) computed in-database so no token material crosses the wire.
+    const result = await db
+      .update(accessTokens)
+      .set({ tokenHash: sql`encode(digest(${accessTokens.token}, 'sha256'), 'hex')` })
+      .where(isNull(accessTokens.tokenHash));
+    const count = (result as any).rowCount ?? 0;
+    if (count > 0) console.log(`✓ Backfilled token_hash for ${count} access token(s)`);
+  } catch (e: any) {
+    // pgcrypto may be unavailable; fall back to hashing in Node.
+    try {
+      const rows = await db
+        .select({ id: accessTokens.id, token: accessTokens.token })
+        .from(accessTokens)
+        .where(isNull(accessTokens.tokenHash));
+      for (const row of rows) {
+        const hash = crypto.createHash('sha256').update(row.token).digest('hex');
+        await db.update(accessTokens).set({ tokenHash: hash }).where(eq(accessTokens.id, row.id));
+      }
+      if (rows.length > 0) console.log(`✓ Backfilled token_hash for ${rows.length} access token(s)`);
+    } catch (inner: any) {
+      console.error('⚠️  token_hash backfill failed — existing tokens will be rejected:', inner.message);
+    }
+  }
 }
 
 async function seedDefaults() {

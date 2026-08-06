@@ -3,6 +3,7 @@
  * Provides immediate revocation capability for access tokens
  */
 
+import crypto from 'crypto';
 import { db } from '../database.js';
 import { accessTokens, refreshTokens } from '../schema.js';
 import { eq, and, gt, lt, inArray, ne } from 'drizzle-orm';
@@ -34,10 +35,11 @@ export async function revokeToken(
   reason: RevokeReason = RevokeReason.LOGOUT
 ): Promise<boolean> {
   try {
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
     const result = await db
       .update(accessTokens)
       .set({ revoked: true, revokedAt: new Date(), revokeReason: reason })
-      .where(and(eq(accessTokens.token, token), eq(accessTokens.revoked, false)));
+      .where(and(eq(accessTokens.tokenHash, tokenHash), eq(accessTokens.revoked, false)));
 
     return ((result as any).rowCount ?? 0) > 0;
   } catch (error) {
@@ -50,10 +52,11 @@ export async function revokeToken(
  * Check if a token is revoked
  */
 export async function isTokenRevoked(token: string): Promise<boolean> {
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
   const [record] = await db
     .select({ revoked: accessTokens.revoked })
     .from(accessTokens)
-    .where(eq(accessTokens.token, token))
+    .where(eq(accessTokens.tokenHash, tokenHash))
     .limit(1);
 
   return !record || record.revoked === true;
@@ -113,12 +116,13 @@ export async function revokeOtherUserTokens(
   reason: RevokeReason = RevokeReason.SESSION_INVALIDATION
 ): Promise<number> {
   try {
+    const currentTokenHash = crypto.createHash('sha256').update(currentToken).digest('hex');
     const result = await db
       .update(accessTokens)
       .set({ revoked: true, revokedAt: new Date(), revokeReason: reason })
       .where(and(
         eq(accessTokens.userId, userId),
-        ne(accessTokens.token, currentToken),
+        ne(accessTokens.tokenHash, currentTokenHash),
         eq(accessTokens.revoked, false)
       ));
 
@@ -136,7 +140,7 @@ export async function getActiveTokensForUser(userId: string): Promise<TokenBlack
   const rows = await db
     .select({
       id: accessTokens.id,
-      token: accessTokens.token,
+      tokenHash: accessTokens.tokenHash,
       userId: accessTokens.userId,
       revoked: accessTokens.revoked,
       revokedAt: accessTokens.revokedAt,
@@ -153,7 +157,7 @@ export async function getActiveTokensForUser(userId: string): Promise<TokenBlack
 
   return rows.map(r => ({
     id: r.id,
-    token: r.token,
+    token: r.tokenHash || '',
     user_id: r.userId,
     revoked: r.revoked ?? false,
     revoked_at: r.revokedAt,
@@ -166,10 +170,11 @@ export async function getActiveTokensForUser(userId: string): Promise<TokenBlack
  * Get revocation history for a token
  */
 export async function getTokenRevocationInfo(token: string): Promise<TokenBlacklistEntry | null> {
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
   const [row] = await db
     .select({
       id: accessTokens.id,
-      token: accessTokens.token,
+      tokenHash: accessTokens.tokenHash,
       userId: accessTokens.userId,
       revoked: accessTokens.revoked,
       revokedAt: accessTokens.revokedAt,
@@ -177,14 +182,14 @@ export async function getTokenRevocationInfo(token: string): Promise<TokenBlackl
       expiresAt: accessTokens.expiresAt,
     })
     .from(accessTokens)
-    .where(eq(accessTokens.token, token))
+    .where(eq(accessTokens.tokenHash, tokenHash))
     .limit(1);
 
   if (!row) return null;
 
   return {
     id: row.id,
-    token: row.token,
+    token: row.tokenHash || '',
     user_id: row.userId,
     revoked: row.revoked ?? false,
     revoked_at: row.revokedAt,

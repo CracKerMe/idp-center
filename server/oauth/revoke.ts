@@ -1,10 +1,10 @@
 import type { Request, Response } from 'express';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { db } from '../database.js';
 import { refreshTokens } from '../schema.js';
 import { authenticateClient } from './client-auth.js';
 import { resolveToken } from './token-lookup.js';
-import { revokeToken, RevokeReason } from '../utils/token-blacklist.js';
+import { revokeToken, revokeTokensBySession, RevokeReason } from '../utils/token-blacklist.js';
 import { OAuthError, sendOAuthError } from './errors.js';
 
 /**
@@ -30,9 +30,22 @@ export async function handleRevoke(req: Request, res: Response): Promise<void> {
     if (resolved.kind === 'access') {
       await revokeToken(token, RevokeReason.LOGOUT);
     } else {
-      // TODO(§1.5 oidc_sessions): once refresh tokens carry oidc_session_id, cascade
-      // to revoke every access token issued under the same session (RFC 7009 §2.1 SHOULD).
-      await db.update(refreshTokens).set({ revoked: true }).where(eq(refreshTokens.id, resolved.row.id));
+      await db
+        .update(refreshTokens)
+        .set({ revoked: true })
+        .where(eq(refreshTokens.id, resolved.row.id));
+
+      // RFC 7009 §2.1 SHOULD: revoking a refresh token cascades to every access
+      // token issued under the same OIDC session.
+      if (resolved.row.oidcSessionId) {
+        await revokeTokensBySession(resolved.row.oidcSessionId, RevokeReason.LOGOUT);
+      } else if (resolved.row.familyId) {
+        // No session link (e.g. device flow) — fall back to revoking the token family.
+        await db
+          .update(refreshTokens)
+          .set({ revoked: true })
+          .where(and(eq(refreshTokens.familyId, resolved.row.familyId), eq(refreshTokens.tenantId, client.tenantId)));
+      }
     }
 
     res.status(200).end();

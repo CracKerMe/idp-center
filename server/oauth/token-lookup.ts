@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { eq, and } from 'drizzle-orm';
 import { db } from '../database.js';
 import { accessTokens, refreshTokens } from '../schema.js';
@@ -8,10 +9,11 @@ export type ResolvedToken =
   | null;
 
 async function lookupAccess(raw: string, tenantId: string): Promise<typeof accessTokens.$inferSelect | null> {
+  const tokenHash = crypto.createHash('sha256').update(raw).digest('hex');
   const [row] = await db
     .select()
     .from(accessTokens)
-    .where(and(eq(accessTokens.token, raw), eq(accessTokens.tenantId, tenantId)))
+    .where(and(eq(accessTokens.tokenHash, tokenHash), eq(accessTokens.tenantId, tenantId)))
     .limit(1);
   return row ?? null;
 }

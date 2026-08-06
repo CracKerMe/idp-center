@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 import * as jose from 'jose';
 import type { Request } from 'express';
 import { eq, and } from 'drizzle-orm';
@@ -37,8 +38,34 @@ function timingSafeEqualStr(a: string, b: string): boolean {
   return crypto.timingSafeEqual(bufA, bufB);
 }
 
+/**
+ * Verifies a presented client secret against the stored credential.
+ *
+ * Prefers the bcrypt hash when present. Rows that still only carry the legacy
+ * plaintext secret are compared in constant time and then lazily upgraded to a
+ * hash, so the plaintext column can be dropped in a later release
+ * (ENTERPRISE-OAUTH-IMPLEMENTATION-PLAN.md §1.2).
+ */
 export async function verifyClientSecret(row: typeof clients.$inferSelect, presented: string): Promise<boolean> {
-  return timingSafeEqualStr(row.clientSecret, presented);
+  if (row.clientSecretHash) {
+    return bcrypt.compare(presented, row.clientSecretHash);
+  }
+
+  const ok = timingSafeEqualStr(row.clientSecret, presented);
+  if (ok) {
+    // Lazy migration: hash on first successful auth. Failure here must never
+    // break authentication, so it's best-effort.
+    try {
+      const hash = await bcrypt.hash(presented, 10);
+      await db
+        .update(clients)
+        .set({ clientSecretHash: hash, clientSecretAlg: 'bcrypt' })
+        .where(eq(clients.id, row.id));
+    } catch (err) {
+      console.warn(`[oauth] failed to lazily hash client_secret for ${row.clientId}:`, err);
+    }
+  }
+  return ok;
 }
 
 function parseBasicAuth(header: string): { clientId: string; clientSecret: string } | null {
@@ -53,10 +80,15 @@ function parseBasicAuth(header: string): { clientId: string; clientSecret: strin
   const sep = decoded.indexOf(':');
   if (sep === -1) return null;
   // RFC 6749 §2.3.1: both halves are form-urlencoded before being joined with ':'.
-  return {
-    clientId: decodeURIComponent(decoded.slice(0, sep).replace(/\+/g, '%20')),
-    clientSecret: decodeURIComponent(decoded.slice(sep + 1).replace(/\+/g, '%20')),
-  };
+  // Malformed percent-escapes must yield a clean invalid_client, not a 500.
+  try {
+    return {
+      clientId: decodeURIComponent(decoded.slice(0, sep).replace(/\+/g, '%20')),
+      clientSecret: decodeURIComponent(decoded.slice(sep + 1).replace(/\+/g, '%20')),
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -143,7 +175,7 @@ async function authenticateViaClientAssertion(req: Request, tenantId: string): P
 
   enforceAuthMethodCategory(row.tokenEndpointAuthMethod, authMethod);
 
-  return { row, clientId: row.clientId, tenantId, authMethod, grantTypes: parseList(row.grantTypes) };
+  return { row, clientId: row.clientId, tenantId, authMethod, grantTypes: parseList(row.grantTypes), allowedScopes: parseList(row.allowedScopes) };
 }
 
 export async function authenticateClient(req: Request): Promise<AuthenticatedClient> {
@@ -196,5 +228,6 @@ export async function authenticateClient(req: Request): Promise<AuthenticatedCli
     tenantId,
     authMethod,
     grantTypes: parseList(row.grantTypes),
+    allowedScopes: parseList(row.allowedScopes),
   };
 }
