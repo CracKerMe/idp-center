@@ -52,7 +52,7 @@ async function seedDefaults() {
       name: 'Default Tenant',
       domain: 'localhost',
       isActive: true,
-    });
+    }).onConflictDoNothing();
   }
 
   // Seed admin user
@@ -76,7 +76,7 @@ async function seedDefaults() {
       emailVerified: true,
       emailVerifiedAt: new Date(),
       mustChangePassword: true,
-    });
+    }).onConflictDoNothing();
   }
 
   // Seed default client
@@ -96,7 +96,7 @@ async function seedDefaults() {
       clientName: 'Default Client',
       redirectUris: 'http://localhost:5986/callback,http://localhost:3000/callback',
       grantTypes: 'authorization_code',
-    });
+    }).onConflictDoNothing();
   }
 
   if (generatedAdminPassword || generatedClientSecret) {
