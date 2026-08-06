@@ -9,6 +9,7 @@ import { db, initDatabase } from './server/database.js';
 import { cleanupExpiredTokens } from './server/utils/cleanup.js';
 import authRouter from './server/routes/auth.js';
 import oidcRouter from './server/routes/oidc.js';
+import wellKnownRouter from './server/routes/well-known.js';
 import userRouter from './server/routes/user.js';
 import adminRouter from './server/routes/admin.js';
 import githubRouter from './server/routes/github.js';
@@ -79,7 +80,7 @@ app.use('/api/auth', authRouter);
 app.use('/api/oidc', oidcRouter);
 app.use('/api/user', userRouter);
 app.use('/api/admin', adminRouter);
-app.use('/.well-known', oidcRouter);
+app.use('/.well-known', wellKnownRouter);
 app.use('/api/uploads', express.static(path.join(rootDir, 'uploads')));
 
 export async function startServer() {
