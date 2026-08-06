@@ -3,17 +3,17 @@ import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { Shield } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { parseApiResponse, isSuccess, getErrorMessage } from '../utils/fetch';
-import type { AuthUser } from '../types/user';
-import { OtpInput } from '../components/OtpInput';
+import type { AuthUser, MfaFactorOption } from '../types/user';
 import { GithubOAuthButton } from '../components/GithubOAuthButton';
 import { EmailVerificationResend } from '../components/EmailVerificationResend';
 import { DeviceTrustOptions } from '../components/DeviceTrustOptions';
+import { MfaChallenge } from '../components/MfaChallenge';
 
 export default function Login({ setUser }: { setUser: (user: AuthUser | null) => void }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [otp, setOtp] = useState('');
-  const [requireOtp, setRequireOtp] = useState(false);
+  const [mfaToken, setMfaToken] = useState<string | null>(null);
+  const [mfaFactors, setMfaFactors] = useState<MfaFactorOption[]>([]);
   const [rememberMe, setRememberMe] = useState(false);
   const [trustDevice, setTrustDevice] = useState(false);
   const [error, setError] = useState('');
@@ -31,6 +31,24 @@ export default function Login({ setUser }: { setUser: (user: AuthUser | null) =>
     }
   }, [searchParams.error]);
 
+  function finishLogin(data: { access_token: string; refresh_token: string; session_id?: string; user?: AuthUser; mfa_enrollment_required?: boolean }) {
+    localStorage.setItem('token', data.access_token);
+    localStorage.setItem('refresh_token', data.refresh_token);
+    if (data.session_id) localStorage.setItem('session_id', data.session_id);
+    if (data.user?.tenant_id) localStorage.setItem('tenant_id', data.user.tenant_id);
+    setUser(data.user ?? null);
+
+    if (data.mfa_enrollment_required) {
+      window.location.href = '/#/profile?setup_mfa=1';
+      return;
+    }
+    if (redirect && redirect.startsWith('/') && !redirect.startsWith('//')) {
+      window.location.href = '/#' + redirect;
+    } else {
+      navigate({ to: '/' });
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -41,7 +59,6 @@ export default function Login({ setUser }: { setUser: (user: AuthUser | null) =>
       body: JSON.stringify({
         username,
         password,
-        otp: otp || undefined,
         remember_me: rememberMe,
         trust_device: trustDevice,
       }),
@@ -52,41 +69,33 @@ export default function Login({ setUser }: { setUser: (user: AuthUser | null) =>
       refresh_token?: string;
       session_id?: string;
       user?: AuthUser;
-      requireOtp?: boolean;
+      mfa_token?: string;
+      factors?: MfaFactorOption[];
       unlock_at?: string;
       must_change_password?: boolean;
+      mfa_enrollment_required?: boolean;
     }>(res);
     const { data, code, error: apiError } = result;
 
     if (code === 0) {
-      localStorage.setItem('token', data!.access_token!);
-      localStorage.setItem('refresh_token', data!.refresh_token!);
-      if (data!.session_id) localStorage.setItem('session_id', data!.session_id);
-      if (data!.user?.tenant_id) localStorage.setItem('tenant_id', data!.user.tenant_id);
-      setUser(data!.user ?? null);
-      if (redirect && redirect.startsWith('/') && !redirect.startsWith('//')) {
-        window.location.href = '/#' + redirect;
-      } else {
-        navigate({ to: '/' });
-      }
+      finishLogin(data as any);
+    } else if (code === 'AUTH_MFA_REQUIRED' && data?.mfa_token && data?.factors) {
+      setMfaToken(data.mfa_token);
+      setMfaFactors(data.factors);
+    } else if (code === 'PASSWORD_EXPIRED' && data?.must_change_password) {
+      setMustChangePassword(true);
+      setError('');
     } else {
-      if (data?.requireOtp) {
-        setRequireOtp(true);
-      } else if (code === 'PASSWORD_EXPIRED' && data?.must_change_password) {
-        setMustChangePassword(true);
-        setError('');
-      } else {
-        const errorMessages: Record<string, string> = {
-          ACCOUNT_NOT_VERIFIED: 'Your email has not been verified. Please check your inbox for a verification link.',
-          ACCOUNT_PENDING_DELETION: 'This account is scheduled for deletion. Please contact support to cancel.',
-          ACCOUNT_LOCKED: data?.unlock_at
-            ? `Account is temporarily locked. Try again after ${new Date(data.unlock_at).toLocaleTimeString()}.`
-            : 'Account is temporarily locked due to too many failed attempts.',
-          ACCOUNT_DISABLED: 'This account has been disabled. Please contact an administrator.',
-        };
-        setEmailNotVerified(code === 'ACCOUNT_NOT_VERIFIED');
-        setError(errorMessages[code as string] || apiError || 'Login failed');
-      }
+      const errorMessages: Record<string, string> = {
+        ACCOUNT_NOT_VERIFIED: 'Your email has not been verified. Please check your inbox for a verification link.',
+        ACCOUNT_PENDING_DELETION: 'This account is scheduled for deletion. Please contact support to cancel.',
+        ACCOUNT_LOCKED: data?.unlock_at
+          ? `Account is temporarily locked. Try again after ${new Date(data.unlock_at).toLocaleTimeString()}.`
+          : 'Account is temporarily locked due to too many failed attempts.',
+        ACCOUNT_DISABLED: 'This account has been disabled. Please contact an administrator.',
+      };
+      setEmailNotVerified(code === 'ACCOUNT_NOT_VERIFIED');
+      setError(errorMessages[code as string] || apiError || 'Login failed');
     }
   };
 
@@ -210,6 +219,45 @@ export default function Login({ setUser }: { setUser: (user: AuthUser | null) =>
                 </button>
               </div>
             </form>
+          ) : mfaToken ? (
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-lg font-semibold text-zinc-900 dark:text-white mb-2">
+                  Verify it's you
+                </h3>
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  Complete the second step to finish signing in.
+                </p>
+              </div>
+
+              <AnimatePresence initial={false}>
+                {error && (
+                  <motion.div
+                    key={error}
+                    initial={{ opacity: 0, y: -8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -8 }}
+                    transition={{ duration: 0.18, ease: 'easeOut' }}
+                    className="text-sm text-center"
+                  >
+                    <p className="text-red-600">{error}</p>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <MfaChallenge
+                mfaToken={mfaToken}
+                factors={mfaFactors}
+                onSuccess={(data) => finishLogin(data as any)}
+                onError={(msg) => setError(msg)}
+              />
+
+              <div className="text-center">
+                <button type="button" onClick={() => { setMfaToken(null); setMfaFactors([]); setError(''); }} className="text-sm text-zinc-500 hover:text-zinc-700 dark:text-zinc-400">
+                  Back to login
+                </button>
+              </div>
+            </div>
           ) : (
           <form className="space-y-6" onSubmit={handleSubmit}>
             <AnimatePresence initial={false}>
@@ -266,20 +314,6 @@ export default function Login({ setUser }: { setUser: (user: AuthUser | null) =>
               </div>
             </div>
 
-            <AnimatePresence initial={false}>
-              {requireOtp && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0, y: -8 }}
-                  animate={{ opacity: 1, height: 'auto', y: 0 }}
-                  exit={{ opacity: 0, height: 0, y: -8 }}
-                  transition={{ duration: 0.24, ease: 'easeOut' }}
-                  className="overflow-hidden"
-                >
-                  <OtpInput value={otp} onChange={setOtp} />
-                </motion.div>
-              )}
-            </AnimatePresence>
-
             <DeviceTrustOptions
               rememberMe={rememberMe}
               onRememberMeChange={setRememberMe}
@@ -298,9 +332,9 @@ export default function Login({ setUser }: { setUser: (user: AuthUser | null) =>
           </form>
           )}
 
-          {!mustChangePassword && <GithubOAuthButton redirect={redirect} />}
+          {!mustChangePassword && !mfaToken && <GithubOAuthButton redirect={redirect} />}
 
-          {!mustChangePassword && (
+          {!mustChangePassword && !mfaToken && (
           <div className="mt-6">
             <div className="relative">
               <div className="absolute inset-0 flex items-center">

@@ -15,6 +15,8 @@ export async function getOrCreateOidcSession(opts: {
   clientId: string;
   tenantId: string;
   scope: string;
+  amr?: string | null;
+  acr?: string | null;
 }): Promise<typeof oidcSessions.$inferSelect> {
   const [existing] = await db
     .select()
@@ -42,6 +44,8 @@ export async function getOrCreateOidcSession(opts: {
       clientId: opts.clientId,
       tenantId: opts.tenantId,
       scope: opts.scope,
+      amr: opts.amr ?? null,
+      acr: opts.acr ?? null,
     })
     .returning();
 

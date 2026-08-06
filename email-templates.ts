@@ -127,3 +127,23 @@ export function accountDeletionEmail(username: string, cancelUrl: string, schedu
   const text = `您好，${username}！\n\n您的账号将于 ${scheduledAt} 被永久删除。\n如需取消，请访问：${cancelUrl}`;
   return { subject, html, text };
 }
+
+/** 多因素认证验证码（邮箱 OTP） */
+export function otpCodeEmail(username: string, code: string, purpose: 'login' | 'setup' = 'login'): EmailContent {
+  const subject = `${code} 是您的验证码 — IdP Center`;
+  const purposeText = purpose === 'setup' ? '绑定邮箱验证方式' : '登录验证';
+  const html = layout(`
+    <h1 style="margin:0 0 8px;font-size:20px;font-weight:700;color:${BRAND.textColor}">验证码</h1>
+    <p style="margin:0 0 20px;color:${BRAND.mutedColor};font-size:14px">用于${purposeText}</p>
+    ${divider()}
+    <p style="font-size:15px">您好，<strong>${username}</strong>！</p>
+    <p style="font-size:15px">您的验证码是：</p>
+    <p style="text-align:center;margin:24px 0">
+      <span style="display:inline-block;font-size:32px;font-weight:700;letter-spacing:8px;color:${BRAND.primaryColor};padding:12px 24px;background:${BRAND.bgColor};border-radius:8px">${code}</span>
+    </p>
+    ${divider()}
+    <p style="font-size:13px;color:${BRAND.mutedColor};margin-bottom:0">⏱ 验证码 <strong>5 分钟</strong>内有效，请勿泄露给他人。如非本人操作，请忽略此邮件。</p>
+  `);
+  const text = `您好，${username}！\n\n您的验证码是：${code}\n\n验证码 5 分钟内有效，请勿泄露给他人。`;
+  return { subject, html, text };
+}

@@ -13,6 +13,7 @@ import wellKnownRouter from './server/routes/well-known.js';
 import userRouter from './server/routes/user.js';
 import adminRouter from './server/routes/admin.js';
 import githubRouter from './server/routes/github.js';
+import mfaRouter from './server/routes/mfa.js';
 import { sql } from 'drizzle-orm';
 
 import { tenantContext } from './server/middleware/tenant.js';
@@ -79,6 +80,7 @@ app.use('/api/auth/github', githubRouter);
 app.use('/api/auth', authRouter);
 app.use('/api/oidc', oidcRouter);
 app.use('/api/user', userRouter);
+app.use('/api/user/mfa', mfaRouter);
 app.use('/api/admin', adminRouter);
 app.use('/.well-known', wellKnownRouter);
 

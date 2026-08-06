@@ -1,7 +1,7 @@
 import { and, eq } from 'drizzle-orm';
 import { db } from '../../database.js';
 import { TOKEN_CONFIG } from '../../config.js';
-import { refreshTokens, users } from '../../schema.js';
+import { refreshTokens, users, oidcSessions } from '../../schema.js';
 import { OAuthError } from '../errors.js';
 import { issueAccessToken, issueRefreshToken, issueIdToken } from '../issue.js';
 import type { GrantContext, GrantHandler, TokenResponse } from '../types.js';
@@ -58,8 +58,14 @@ export const refreshTokenGrant: GrantHandler = {
       familyId: rtRecord.familyId ?? undefined,
       rememberMe: rtRecord.rememberMe ?? false,
     });
-    const { token: newAccessToken } = await issueAccessToken(user, client.clientId, scope, tenantId);
-    const idToken = issueIdToken(user, { clientId: client.clientId, scope });
+    let authCtx: { amr?: string | null; acr?: string | null } = {};
+    if (rtRecord.oidcSessionId) {
+      const [oidcSession] = await db.select({ amr: oidcSessions.amr, acr: oidcSessions.acr }).from(oidcSessions).where(eq(oidcSessions.id, rtRecord.oidcSessionId)).limit(1);
+      if (oidcSession) authCtx = oidcSession;
+    }
+
+    const { token: newAccessToken } = await issueAccessToken(user, client.clientId, scope, tenantId, undefined, undefined, authCtx);
+    const idToken = issueIdToken(user, { clientId: client.clientId, scope, ...authCtx });
 
     return {
       access_token: newAccessToken,

@@ -11,11 +11,13 @@ type UserRow = typeof users.$inferSelect;
  * jsonwebtoken (server/oauth/jwt.ts's RS256 signer takes over at Deploy B —
  * ENTERPRISE-OAUTH-IMPLEMENTATION-PLAN.md §1.1 release B).
  */
-export async function issueAccessToken(user: UserRow, clientId: string, scope: string, tenantId: string, oidcSessionId?: string, cnf?: { jkt: string }): Promise<{ token: string; expiresAt: Date }> {
+export async function issueAccessToken(user: UserRow, clientId: string, scope: string, tenantId: string, oidcSessionId?: string, cnf?: { jkt: string }, authCtx?: { amr?: string | null; acr?: string | null }): Promise<{ token: string; expiresAt: Date }> {
   // Field names must match JwtUserPayload (server/types/index.ts) — authenticateAdmin
   // and other consumers read req.user.is_admin / req.user.tenant_id, not camelCase.
   const payload: Record<string, any> = { id: user.id, username: user.username, is_admin: user.isAdmin, tenant_id: user.tenantId, jti: crypto.randomUUID() };
   if (cnf) payload.cnf = cnf;
+  if (authCtx?.amr) payload.amr = authCtx.amr.split(',');
+  if (authCtx?.acr) payload.acr = authCtx.acr;
   const token = jwt.sign(
     payload,
     config.JWT_SECRET,
@@ -93,7 +95,7 @@ export async function issueRefreshToken(opts: {
   return { token, expiresAt, familyId };
 }
 
-export function issueIdToken(user: UserRow, opts: { clientId: string; scope: string; nonce?: string | null; sid?: string; authTime?: Date }): string {
+export function issueIdToken(user: UserRow, opts: { clientId: string; scope: string; nonce?: string | null; sid?: string; authTime?: Date; amr?: string | null; acr?: string | null }): string {
   const payload: Record<string, any> = {
     iss: config.APP_URL,
     sub: user.id,
@@ -104,6 +106,8 @@ export function issueIdToken(user: UserRow, opts: { clientId: string; scope: str
   if (opts.nonce) payload.nonce = opts.nonce;
   if (opts.sid) payload.sid = opts.sid;
   if (opts.authTime) payload.auth_time = Math.floor(opts.authTime.getTime() / 1000);
+  if (opts.amr) payload.amr = opts.amr.split(',');
+  if (opts.acr) payload.acr = opts.acr;
   if (opts.scope.includes('email')) payload.email = user.email;
   if (opts.scope.includes('profile')) {
     payload.name = user.fullName || user.username;

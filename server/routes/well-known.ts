@@ -41,7 +41,8 @@ router.get('/openid-configuration', (req, res) => {
     frontchannel_logout_session_supported: true,
     backchannel_logout_supported: true,
     backchannel_logout_session_supported: true,
-    claims_supported: ['sub', 'iss', 'aud', 'exp', 'iat', 'nonce', 'sid', 'auth_time', 'email', 'name', 'preferred_username'],
+    claims_supported: ['sub', 'iss', 'aud', 'exp', 'iat', 'nonce', 'sid', 'auth_time', 'email', 'name', 'preferred_username', 'acr', 'amr'],
+    acr_values_supported: ['0', '1'],
   });
 });
 

@@ -1,6 +1,6 @@
 import nodemailer from 'nodemailer';
 import { config } from '../config.js';
-import { verificationEmail, passwordResetEmail, accountDeletionEmail } from '../../email-templates.js';
+import { verificationEmail, passwordResetEmail, accountDeletionEmail, otpCodeEmail } from '../../email-templates.js';
 
 export class EmailService {
   private transporter!: nodemailer.Transporter;
@@ -32,6 +32,11 @@ export class EmailService {
   async sendAccountDeletionConfirmEmail(to: string, username: string, scheduledAt: string): Promise<void> {
     const cancelUrl = `${config.APP_URL}/account/cancel-deletion`;
     const { subject, html, text } = accountDeletionEmail(username, cancelUrl, scheduledAt);
+    await this._send(to, subject, html, text);
+  }
+
+  async sendOtpCodeEmail(to: string, code: string, username: string, purpose: 'login' | 'setup' = 'login'): Promise<void> {
+    const { subject, html, text } = otpCodeEmail(username, code, purpose);
     await this._send(to, subject, html, text);
   }
 

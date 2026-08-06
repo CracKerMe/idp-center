@@ -1,21 +1,22 @@
 import express from 'express';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
-import { authenticator } from 'otplib';
-import qrcode from 'qrcode';
 import jwt from 'jsonwebtoken';
+import { z } from 'zod';
 import { db } from '../database.js';
-import { config, SECURITY_CONFIG, TOKEN_CONFIG } from '../config.js';
+import { config, SECURITY_CONFIG, TOKEN_CONFIG, MFA_CONFIG } from '../config.js';
 import { emailService } from '../services/email.service.js';
 import { logAudit } from '../utils/audit.js';
 import { validatePasswordStrength } from '../utils/password.js';
 import { isPasswordExpired, validatePassword, recordPasswordHistory } from '../services/password-policy.service.js';
+import { isMfaRequiredForUser } from '../services/mfa-policy.service.js';
+import * as mfaService from '../services/mfa.service.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
-import { success, error, message, ErrorCode } from '../utils/response.js';
+import { success, error, message, ErrorCode, ApiResponse } from '../utils/response.js';
 import { revokeToken, revokeAllUserTokens, RevokeReason } from '../utils/token-blacklist.js';
-import { users, accessTokens, refreshTokens, sessions, emailVerifications, passwordResets, trustedDevices, accountDeletionRequests } from '../schema.js';
-import { eq, and, gt, inArray } from 'drizzle-orm';
+import { users, accessTokens, refreshTokens, sessions, emailVerifications, passwordResets, trustedDevices, accountDeletionRequests, mfaFactors } from '../schema.js';
+import { eq, and, gt, inArray, desc } from 'drizzle-orm';
 import {
   registerSchema,
   loginSchema,
@@ -30,11 +31,138 @@ import {
   changeExpiredPasswordSchema,
 } from '../validators/auth.validator.js';
 
+type UserRow = typeof users.$inferSelect;
+
+const mfaChallengeSchema = z.object({
+  mfa_token: z.string().min(1),
+  factor_id: z.string().uuid(),
+});
+
+const mfaVerifySchema = z.object({
+  mfa_token: z.string().min(1),
+  factor_id: z.string().uuid().optional(),
+  code: z.string().optional(),
+  response: z.any().optional(),
+});
+
 const router = express.Router();
 
 function computeDeviceFingerprint(userAgent: string, ip: string): string {
   const salt = config.ENCRYPTION_KEY || config.JWT_SECRET;
   return crypto.createHmac('sha256', salt).update(userAgent + ip).digest('hex');
+}
+
+/** amr: RFC 8176 auth method references. acr: '0' password-only, '1' password+second-factor. */
+function computeAcr(amr: string[]): string {
+  return amr.length > 1 ? '1' : '0';
+}
+
+const AMR_BY_FACTOR_TYPE: Record<string, string> = {
+  totp: 'otp',
+  email: 'email',
+  sms: 'sms',
+  webauthn: 'hwk',
+  recovery: 'recovery',
+};
+
+/**
+ * Single token-issuance entrypoint for a fully-authenticated login — reached either
+ * directly from POST /login (no MFA needed) or from POST /auth/mfa/verify (after a
+ * second factor was checked). Keeping this in one place is what let device-trust,
+ * session creation, and amr/acr claims stay consistent between both paths.
+ */
+async function completeLogin(user: UserRow, req: express.Request, opts: {
+  remember_me: boolean;
+  trust_device: boolean;
+  deviceFingerprint: string;
+  amr: string[];
+  deviceTrusted: boolean;
+  mfaEnrollmentRequired?: boolean;
+}): Promise<ApiResponse> {
+  const tenantId = req.tenantId || user.tenantId || 'default';
+  const userAgent = req.get('User-Agent') || '';
+  const ip = req.ip || req.connection.remoteAddress || 'unknown';
+  const now = new Date();
+  const acr = computeAcr(opts.amr);
+
+  const sessionId = crypto.randomUUID();
+
+  const accessToken = jwt.sign(
+    { id: user.id, username: user.username, is_admin: user.isAdmin, tenant_id: user.tenantId, bsid: sessionId, jti: crypto.randomUUID(), amr: opts.amr, acr },
+    config.JWT_SECRET,
+    { expiresIn: TOKEN_CONFIG.accessTokenExpiry }
+  );
+  const accessExpiresAt = new Date(Date.now() + TOKEN_CONFIG.accessTokenExpiryMs);
+  await db.insert(accessTokens).values({
+    id: crypto.randomUUID(),
+    token: accessToken,
+    clientId: 'system',
+    userId: user.id,
+    tenantId,
+    expiresAt: accessExpiresAt,
+  });
+
+  const refreshToken = crypto.randomBytes(32).toString('hex');
+  const refreshExpiresAt = new Date(Date.now() + (opts.remember_me ? TOKEN_CONFIG.refreshTokenRememberMeMs : TOKEN_CONFIG.refreshTokenExpiryMs));
+
+  await db.insert(sessions).values({
+    id: sessionId,
+    userId: user.id,
+    deviceInfo: userAgent,
+    ipAddress: ip,
+    amr: opts.amr.join(','),
+    acr,
+  });
+
+  let newDeviceTrusted = false;
+  let deviceId: string | null = null;
+  if (opts.trust_device) {
+    const expiresAt = new Date(Date.now() + TOKEN_CONFIG.trustedDeviceExpiryMs);
+    const deviceName = userAgent.substring(0, 100);
+    deviceId = crypto.randomUUID();
+    await db.delete(trustedDevices).where(and(
+      eq(trustedDevices.userId, user.id),
+      eq(trustedDevices.deviceFingerprint, opts.deviceFingerprint),
+    ));
+    await db.insert(trustedDevices).values({
+      id: deviceId,
+      userId: user.id,
+      deviceFingerprint: opts.deviceFingerprint,
+      deviceName,
+      expiresAt,
+      lastUsedAt: now,
+    });
+    newDeviceTrusted = true;
+  }
+
+  await db.insert(refreshTokens).values({
+    id: crypto.randomUUID(),
+    token: refreshToken,
+    userId: user.id,
+    expiresAt: refreshExpiresAt,
+    rememberMe: opts.remember_me,
+    deviceId,
+  });
+
+  await logAudit(user.id, 'LOGIN_SUCCESS', req, `Session: ${sessionId}; amr=${opts.amr.join(',')}`, tenantId);
+
+  return success({
+    access_token: accessToken,
+    refresh_token: refreshToken,
+    expires_in: TOKEN_CONFIG.accessTokenExpirySeconds,
+    token_type: 'Bearer',
+    device_trusted: newDeviceTrusted || opts.deviceTrusted,
+    mfa_enrollment_required: opts.mfaEnrollmentRequired ?? false,
+    user: {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      is_admin: user.isAdmin,
+      otp_enabled: user.otpEnabled,
+      tenant_id: user.tenantId,
+    },
+    session_id: sessionId,
+  }, 'Login successful');
 }
 
 // POST /api/auth/register
@@ -85,7 +213,7 @@ router.post('/register', validate({ body: registerSchema }), async (req, res) =>
 
 // POST /api/auth/login
 router.post('/login', validate({ body: loginSchema }), async (req, res) => {
-  const { username, password, otp, remember_me, trust_device } = req.body;
+  const { username, password, remember_me, trust_device } = req.body;
   const tenantId = req.tenantId;
 
   const [user] = await db.select().from(users).where(and(eq(users.username, username), eq(users.tenantId, tenantId))).limit(1);
@@ -124,37 +252,6 @@ router.post('/login', validate({ body: loginSchema }), async (req, res) => {
 
   await db.update(users).set({ failedLoginAttempts: 0, lockedUntil: null }).where(eq(users.id, user.id));
 
-  const userAgent = req.get('User-Agent') || '';
-  const ip = req.ip || req.connection.remoteAddress || 'unknown';
-  const deviceFingerprint = computeDeviceFingerprint(userAgent, ip);
-  const now = new Date();
-
-  let deviceTrusted = false;
-  if (user.otpEnabled) {
-    const [trustedDevice] = await db.select({ id: trustedDevices.id }).from(trustedDevices).where(and(
-      eq(trustedDevices.userId, user.id),
-      eq(trustedDevices.deviceFingerprint, deviceFingerprint),
-      gt(trustedDevices.expiresAt, now),
-    )).limit(1);
-
-    if (trustedDevice) {
-      await db.update(trustedDevices).set({ lastUsedAt: now }).where(eq(trustedDevices.id, trustedDevice.id));
-      deviceTrusted = true;
-    } else {
-      if (!otp) {
-        return res.status(403).json({
-          ...error('OTP required', ErrorCode.AUTH_OTP_REQUIRED),
-          data: { requireOtp: true },
-        });
-      }
-      const isValid = authenticator.check(otp, user.otpSecret!);
-      if (!isValid) {
-        await logAudit(user.id, 'LOGIN_FAILED_OTP', req, `Failed OTP for ${username}`, tenantId);
-        return res.status(401).json(error('Invalid OTP', ErrorCode.AUTH_OTP_INVALID));
-      }
-    }
-  }
-
   if (!user.emailVerified && !user.isAdmin) {
     return res.status(403).json(error('Email not verified', ErrorCode.ACCOUNT_NOT_VERIFIED));
   }
@@ -187,85 +284,156 @@ router.post('/login', validate({ body: loginSchema }), async (req, res) => {
     });
   }
 
-  // Created before signing so the access token can carry it as `bsid` — the OIDC
-  // session (server/schema.ts oidcSessions) links back to this browser/SSO session.
-  const sessionId = crypto.randomUUID();
+  const userAgent = req.get('User-Agent') || '';
+  const ip = req.ip || req.connection.remoteAddress || 'unknown';
+  const deviceFingerprint = computeDeviceFingerprint(userAgent, ip);
+  const now = new Date();
 
-  const accessToken = jwt.sign(
-    { id: user.id, username: user.username, is_admin: user.isAdmin, tenant_id: user.tenantId, bsid: sessionId, jti: crypto.randomUUID() },
-    config.JWT_SECRET,
-    { expiresIn: TOKEN_CONFIG.accessTokenExpiry }
-  );
-  const accessExpiresAt = new Date(Date.now() + TOKEN_CONFIG.accessTokenExpiryMs);
-  await db.insert(accessTokens).values({
-    id: crypto.randomUUID(),
-    token: accessToken,
-    clientId: 'system',
-    userId: user.id,
-    tenantId,
-    expiresAt: accessExpiresAt,
-  });
+  const activeFactors = await mfaService.getActiveFactors(user.id);
+  const mfaEnabled = activeFactors.some(f => f.type !== 'recovery');
 
-  const refreshToken = crypto.randomBytes(32).toString('hex');
-  const refreshDays = remember_me === true ? TOKEN_CONFIG.refreshTokenRememberMeDays : TOKEN_CONFIG.refreshTokenExpiryDays;
-  const refreshExpiresAt = new Date(Date.now() + (remember_me === true ? TOKEN_CONFIG.refreshTokenRememberMeMs : TOKEN_CONFIG.refreshTokenExpiryMs));
-
-  await db.insert(sessions).values({
-    id: sessionId,
-    userId: user.id,
-    deviceInfo: userAgent,
-    ipAddress: ip,
-  });
-
-  let newDeviceTrusted = false;
-  let deviceId: string | null = null;
-  if (trust_device === true) {
-    const expiresAt = new Date(Date.now() + TOKEN_CONFIG.trustedDeviceExpiryMs);
-    const deviceName = userAgent.substring(0, 100);
-    deviceId = crypto.randomUUID();
-    // Delete existing then insert (onConflictDoUpdate not available for uniqueIndex)
-    await db.delete(trustedDevices).where(and(
+  if (mfaEnabled) {
+    const [trustedDevice] = await db.select({ id: trustedDevices.id }).from(trustedDevices).where(and(
       eq(trustedDevices.userId, user.id),
       eq(trustedDevices.deviceFingerprint, deviceFingerprint),
-    ));
-    await db.insert(trustedDevices).values({
-      id: deviceId,
-      userId: user.id,
-      deviceFingerprint,
-      deviceName,
-      expiresAt,
-      lastUsedAt: now,
+      gt(trustedDevices.expiresAt, now),
+    )).limit(1);
+
+    if (trustedDevice) {
+      await db.update(trustedDevices).set({ lastUsedAt: now }).where(eq(trustedDevices.id, trustedDevice.id));
+      const result = await completeLogin(user, req, {
+        remember_me: remember_me === true,
+        trust_device: trust_device === true,
+        deviceFingerprint,
+        amr: ['pwd'],
+        deviceTrusted: true,
+      });
+      return res.json(result);
+    }
+
+    // Second factor required — hand back a short-lived mfa_token instead of real
+    // tokens. The client re-presents it (plus a chosen factor) to /mfa/challenge
+    // and /mfa/verify, which complete the login via the same completeLogin() path.
+    const mfaToken = jwt.sign(
+      {
+        typ: 'mfa_challenge',
+        sub: user.id,
+        tenantId,
+        remember_me: remember_me === true,
+        trust_device: trust_device === true,
+        deviceFingerprint,
+      },
+      config.JWT_SECRET,
+      { expiresIn: MFA_CONFIG.mfaTokenExpirySec }
+    );
+
+    return res.status(403).json({
+      ...error('MFA verification required', ErrorCode.AUTH_MFA_REQUIRED),
+      data: {
+        mfa_token: mfaToken,
+        expires_in: MFA_CONFIG.mfaTokenExpirySec,
+        factors: activeFactors.filter(f => f.type !== 'recovery').map(f => ({ id: f.id, type: f.type, name: f.name })),
+      },
     });
-    newDeviceTrusted = true;
   }
 
-  await db.insert(refreshTokens).values({
-    id: crypto.randomUUID(),
-    token: refreshToken,
-    userId: user.id,
-    expiresAt: refreshExpiresAt,
-    rememberMe: remember_me === true,
-    deviceId,
+  const mfaEnrollmentRequired = await isMfaRequiredForUser(user.id, tenantId);
+  const result = await completeLogin(user, req, {
+    remember_me: remember_me === true,
+    trust_device: trust_device === true,
+    deviceFingerprint,
+    amr: ['pwd'],
+    deviceTrusted: false,
+    mfaEnrollmentRequired,
   });
+  res.json(result);
+});
 
-  await logAudit(user.id, 'LOGIN_SUCCESS', req, `Session: ${sessionId}`, tenantId);
+// POST /api/auth/mfa/challenge — for factor types that need a server-sent code (email/sms)
+// or a fresh WebAuthn challenge. TOTP and recovery codes are verified directly at /mfa/verify.
+router.post('/mfa/challenge', validate({ body: mfaChallengeSchema }), async (req, res) => {
+  const { mfa_token, factor_id } = req.body;
 
-  res.json(success({
-    access_token: accessToken,
-    refresh_token: refreshToken,
-    expires_in: TOKEN_CONFIG.accessTokenExpirySeconds,
-    token_type: 'Bearer',
-    device_trusted: newDeviceTrusted || deviceTrusted,
-    user: {
-      id: user.id,
-      username: user.username,
-      email: user.email,
-      is_admin: user.isAdmin,
-      otp_enabled: user.otpEnabled,
-      tenant_id: user.tenantId,
-    },
-    session_id: sessionId,
-  }, 'Login successful'));
+  let payload: any;
+  try {
+    payload = jwt.verify(mfa_token, config.JWT_SECRET);
+  } catch {
+    return res.status(401).json(error('Invalid or expired mfa_token', ErrorCode.AUTH_MFA_TOKEN_INVALID));
+  }
+  if (payload.typ !== 'mfa_challenge') {
+    return res.status(401).json(error('Invalid mfa_token', ErrorCode.AUTH_MFA_TOKEN_INVALID));
+  }
+
+  const [user] = await db.select().from(users).where(eq(users.id, payload.sub)).limit(1);
+  if (!user || !user.isActive) return res.status(401).json(error('Invalid mfa_token', ErrorCode.AUTH_MFA_TOKEN_INVALID));
+
+  const factor = await mfaService.getActiveFactor(user.id, factor_id);
+  if (!factor) return res.status(404).json(error('Factor not found', ErrorCode.RESOURCE_NOT_FOUND));
+
+  if (factor.type === 'email' || factor.type === 'sms') {
+    await mfaService.sendLoginChallenge(user.id, factor_id, user.username);
+    return res.json(message('Verification code sent'));
+  }
+  if (factor.type === 'webauthn') {
+    const options = await mfaService.beginWebauthnAuthentication(user.id, factor_id);
+    return res.json(success({ options }));
+  }
+
+  res.json(message('Enter your authenticator code'));
+});
+
+// POST /api/auth/mfa/verify — completes login after a second factor is presented.
+// `factor_id` selects totp/email/sms/webauthn; recovery codes omit factor_id.
+router.post('/mfa/verify', validate({ body: mfaVerifySchema }), async (req, res) => {
+  const { mfa_token, factor_id, code, response } = req.body;
+
+  let payload: any;
+  try {
+    payload = jwt.verify(mfa_token, config.JWT_SECRET);
+  } catch {
+    return res.status(401).json(error('Invalid or expired mfa_token', ErrorCode.AUTH_MFA_TOKEN_INVALID));
+  }
+  if (payload.typ !== 'mfa_challenge') {
+    return res.status(401).json(error('Invalid mfa_token', ErrorCode.AUTH_MFA_TOKEN_INVALID));
+  }
+
+  const [user] = await db.select().from(users).where(eq(users.id, payload.sub)).limit(1);
+  if (!user || !user.isActive) return res.status(401).json(error('Invalid mfa_token', ErrorCode.AUTH_MFA_TOKEN_INVALID));
+
+  const tenantId = req.tenantId || payload.tenantId || 'default';
+  let verified = false;
+  let amrMethod: string | null = null;
+
+  if (factor_id) {
+    const factor = await mfaService.getActiveFactor(user.id, factor_id);
+    if (!factor) return res.status(404).json(error('Factor not found', ErrorCode.RESOURCE_NOT_FOUND));
+
+    if (factor.type === 'totp' && code) {
+      verified = await mfaService.verifyTotp(user.id, factor_id, code);
+    } else if ((factor.type === 'email' || factor.type === 'sms') && code) {
+      verified = await mfaService.verifyLoginOtp(user.id, factor_id, code);
+    } else if (factor.type === 'webauthn' && response) {
+      verified = await mfaService.verifyWebauthnAuthentication(user.id, factor_id, response);
+    }
+    if (verified) amrMethod = AMR_BY_FACTOR_TYPE[factor.type] || factor.type;
+  } else if (code) {
+    verified = await mfaService.verifyRecoveryCode(user.id, code);
+    amrMethod = AMR_BY_FACTOR_TYPE.recovery;
+  }
+
+  if (!verified || !amrMethod) {
+    await logAudit(user.id, 'LOGIN_FAILED_MFA', req, 'MFA verification failed', tenantId);
+    return res.status(401).json(error('Invalid MFA verification', ErrorCode.AUTH_OTP_INVALID));
+  }
+
+  const result = await completeLogin(user, req, {
+    remember_me: !!payload.remember_me,
+    trust_device: !!payload.trust_device,
+    deviceFingerprint: payload.deviceFingerprint || computeDeviceFingerprint(req.get('User-Agent') || '', req.ip || 'unknown'),
+    amr: ['pwd', amrMethod],
+    deviceTrusted: false,
+  });
+  res.json(result);
 });
 
 // GET /api/auth/me
@@ -318,6 +486,9 @@ router.post('/logout', authenticateToken, async (req, res) => {
 });
 
 // POST /api/auth/otp/setup
+// Legacy alias for /api/user/mfa/totp/setup — kept so existing clients (and the users.otp_enabled
+// / otp_secret columns they may still read) keep working. Internally delegates to mfa.service.ts
+// so the resulting factor shows up in the unified /api/user/mfa/factors list and login flow.
 router.post('/otp/setup', authenticateToken, async (req, res) => {
   const userId = req.user!.id;
   const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
@@ -326,11 +497,11 @@ router.post('/otp/setup', authenticateToken, async (req, res) => {
     return res.status(400).json(error('OTP is already enabled. Disable it first to reconfigure.', ErrorCode.VALIDATION_FAILED));
   }
 
-  const secret = authenticator.generateSecret();
-  const otpauth = authenticator.keyuri(user!.username, 'IdP Center', secret);
+  const { secret, qrCodeUrl } = await mfaService.beginTotpSetup(userId, user!.username);
+  // Mirrored for the transition window — server/schema.ts users.otp_secret/otp_enabled are
+  // slated for removal once every caller reads from mfa_factors instead (see plan §2.1).
   await db.update(users).set({ otpSecret: secret }).where(eq(users.id, userId));
 
-  const qrCodeUrl = await qrcode.toDataURL(otpauth);
   res.json(success({ secret, qrCodeUrl }));
 });
 
@@ -338,12 +509,17 @@ router.post('/otp/setup', authenticateToken, async (req, res) => {
 router.post('/otp/verify', authenticateToken, validate({ body: otpVerifySchema }), async (req, res) => {
   const { token } = req.body;
   const userId = req.user!.id;
-  const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
 
-  const isValid = authenticator.check(token, user!.otpSecret!);
+  const [pendingFactor] = await db.select().from(mfaFactors).where(and(
+    eq(mfaFactors.userId, userId),
+    eq(mfaFactors.type, 'totp'),
+    eq(mfaFactors.status, 'pending'),
+  )).orderBy(desc(mfaFactors.createdAt)).limit(1);
+
+  const isValid = !!pendingFactor && await mfaService.confirmTotpSetup(userId, pendingFactor.id, token);
   if (isValid) {
     await db.update(users).set({ otpEnabled: true }).where(eq(users.id, userId));
-    const tenantId = req.tenantId || user!.tenantId || 'default';
+    const tenantId = req.tenantId || req.user!.tenant_id || 'default';
     await logAudit(userId, 'OTP_ENABLED', req, '', tenantId);
     res.json(success({ enabled: true }, 'OTP enabled successfully'));
   } else {

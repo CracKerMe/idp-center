@@ -77,7 +77,7 @@ router.get('/authorize', async (req, res) => {
 
 // POST /api/oidc/authorize
 router.post('/authorize', authenticateToken, async (req, res) => {
-  const { client_id } = req.body;
+  const { client_id, acr_values, max_age } = req.body;
   let { redirect_uri, response_type, nonce, scope, code_challenge, code_challenge_method } = req.body;
   const userId = req.user!.id;
   const tenantId = req.tenantId;
@@ -132,7 +132,29 @@ router.post('/authorize', authenticateToken, async (req, res) => {
   // than per-browser session grouping for back-channel logout in that edge case,
   // but never leaves the OIDC session unlinked.
   const browserSessionId = (req.user as any)?.bsid || userId;
-  const oidcSession = await getOrCreateOidcSession({ browserSessionId, userId, clientId: client_id, tenantId, scope: authScope });
+
+  let browserSession: { amr: string | null; acr: string | null; createdAt: Date | null } | undefined;
+  if ((req.user as any)?.bsid) {
+    [browserSession] = await db.select({ amr: sessions.amr, acr: sessions.acr, createdAt: sessions.createdAt }).from(sessions).where(eq(sessions.id, browserSessionId)).limit(1);
+  }
+
+  // acr_values / max_age (OIDC Core §3.1.2.1): step-up / freshness enforcement. This API
+  // returns JSON rather than redirecting with prompt=login — the SPA is expected to send
+  // the user back through /login (which will re-run MFA) when it sees login_required.
+  if (typeof max_age === 'string' || typeof max_age === 'number') {
+    const maxAgeSec = Number(max_age);
+    if (!Number.isNaN(maxAgeSec) && browserSession?.createdAt) {
+      const ageSec = (Date.now() - new Date(browserSession.createdAt).getTime()) / 1000;
+      if (ageSec > maxAgeSec) {
+        return res.status(401).json({ ...error('Re-authentication required', ErrorCode.AUTH_UNAUTHORIZED), data: { login_required: true, reason: 'max_age_exceeded' } });
+      }
+    }
+  }
+  if (typeof acr_values === 'string' && acr_values.split(' ').includes('1') && browserSession?.acr !== '1') {
+    return res.status(401).json({ ...error('Re-authentication with a second factor required', ErrorCode.AUTH_UNAUTHORIZED), data: { login_required: true, reason: 'acr_not_satisfied' } });
+  }
+
+  const oidcSession = await getOrCreateOidcSession({ browserSessionId, userId, clientId: client_id, tenantId, scope: authScope, amr: browserSession?.amr, acr: browserSession?.acr });
 
   await db.insert(authCodes).values({
     id: crypto.randomUUID(),

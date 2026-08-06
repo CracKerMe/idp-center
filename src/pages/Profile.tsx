@@ -3,6 +3,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { User, Lock, Smartphone, LogOut, Trash2, Shield, Eye, EyeOff, CheckCircle, XCircle, Save, Camera, Link, AlertTriangle } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import AppHeader from '../components/AppHeader';
+import { MfaFactorsManager } from '../components/MfaFactorsManager';
 import { authFetch, parseApiResponse, isSuccess, getErrorMessage } from '../utils/fetch';
 
 interface UserInfo {
@@ -49,7 +50,8 @@ interface PasswordStrength {
 
 export default function Profile({ user, setUser }: { user: UserInfo; setUser: (user: any) => void }) {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<'profile' | 'security' | 'sessions'>('profile');
+  const initialTab = typeof window !== 'undefined' && window.location.hash.includes('setup_mfa=1') ? 'security' : 'profile';
+  const [activeTab, setActiveTab] = useState<'profile' | 'security' | 'sessions'>(initialTab);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -685,6 +687,8 @@ export default function Profile({ user, setUser }: { user: UserInfo; setUser: (u
                   </button>
                 </div>
               </div>
+
+              <MfaFactorsManager userEmail={user.email} />
 
               <div className="bg-white dark:bg-zinc-900 shadow rounded-lg p-6">
                 <h3 className="text-lg font-medium text-zinc-900 dark:text-white mb-4">Change Password</h3>

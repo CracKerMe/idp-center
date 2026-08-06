@@ -24,6 +24,18 @@ const EnvSchema = z.object({
   PG_DATABASE: z.string().default('idp_center'),
   JWT_EXPIRES_IN: z.string().default('1h'),
   OAUTH_ENFORCE_GRANT_TYPES: z.coerce.boolean().default(false),
+
+  // MFA: SMS provider (all optional — defaults to console/dev provider)
+  SMS_PROVIDER: z.enum(['console', 'aliyun', 'tencent']).default('console'),
+  ALIYUN_SMS_ACCESS_KEY_ID: z.string().optional(),
+  ALIYUN_SMS_ACCESS_KEY_SECRET: z.string().optional(),
+  ALIYUN_SMS_SIGN_NAME: z.string().optional(),
+  ALIYUN_SMS_TEMPLATE_CODE: z.string().optional(),
+  TENCENT_SMS_SECRET_ID: z.string().optional(),
+  TENCENT_SMS_SECRET_KEY: z.string().optional(),
+  TENCENT_SMS_SIGN_NAME: z.string().optional(),
+  TENCENT_SMS_TEMPLATE_ID: z.string().optional(),
+  TENCENT_SMS_SDK_APP_ID: z.string().optional(),
 });
 
 const _env = EnvSchema.safeParse(process.env);
@@ -55,6 +67,16 @@ export const TOKEN_CONFIG = {
   refreshTokenRememberMeMs: 30 * 24 * 60 * 60 * 1000,
   trustedDeviceExpiryDays: 30,
   trustedDeviceExpiryMs: 30 * 24 * 60 * 60 * 1000,
+} as const;
+
+/** MFA-specific timing/format constants */
+export const MFA_CONFIG = {
+  mfaTokenExpirySec: 5 * 60,          // short-lived token used between password check and factor verification
+  otpCodeLength: 6,
+  otpExpiryMs: 5 * 60 * 1000,         // email/sms OTP validity window
+  otpMaxAttempts: 5,
+  recoveryCodeCount: 10,
+  recoveryCodeLength: 10,
 } as const;
 
 // Runtime project root. In production compiled files run from build/, so module-relative paths are unstable.

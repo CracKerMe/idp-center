@@ -8,3 +8,9 @@ export interface AuthUser {
   must_change_password?: number;
   [key: string]: unknown;
 }
+
+export interface MfaFactorOption {
+  id: string;
+  type: 'totp' | 'sms' | 'email' | 'webauthn' | 'recovery';
+  name: string | null;
+}

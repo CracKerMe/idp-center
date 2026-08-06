@@ -19,6 +19,8 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
+    "@simplewebauthn/browser": "^13.3.0",
+    "@simplewebauthn/server": "^13.3.2",
     "@tailwindcss/vite": "^4.1.14",
     "@tanstack/react-router": "^1.166.3",
     "@tanstack/router-devtools": "^1.166.6",
