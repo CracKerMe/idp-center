@@ -1,5 +1,6 @@
 import express from 'express';
 import { config } from '../config.js';
+import { publishJwks } from '../services/keys.service.js';
 
 const router = express.Router();
 
@@ -22,9 +23,11 @@ router.get('/openid-configuration', (req, res) => {
   });
 });
 
-// GET /.well-known/jwks.json (HS256 — no public keys to expose)
-router.get('/jwks.json', (req, res) => {
-  res.json({ keys: [] });
+// GET /.well-known/jwks.json
+router.get('/jwks.json', async (req, res) => {
+  const jwks = await publishJwks();
+  res.set('Cache-Control', 'public, max-age=300');
+  res.json(jwks);
 });
 
 export default router;

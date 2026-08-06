@@ -205,3 +205,19 @@ export const schemaMigrations = pgTable('schema_migrations', {
   name: text('name').notNull(),
   appliedAt: timestamp('applied_at').defaultNow(),
 });
+
+export const signingKeys = pgTable('signing_keys', {
+  id: text('id').primaryKey(),
+  kid: text('kid').notNull().unique(),
+  alg: text('alg').notNull().default('RS256'),
+  use: text('use').notNull().default('sig'),
+  publicJwk: text('public_jwk').notNull(),
+  privateJwkEnc: text('private_jwk_enc').notNull(),
+  status: text('status').notNull().default('next'), // active | next | retired
+  createdAt: timestamp('created_at').defaultNow(),
+  activatedAt: timestamp('activated_at'),
+  retiredAt: timestamp('retired_at'),
+  expiresAt: timestamp('expires_at'),
+}, (t) => [
+  index('idx_signing_keys_status').on(t.status),
+]);

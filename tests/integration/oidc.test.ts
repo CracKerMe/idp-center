@@ -3,7 +3,7 @@ vi.setConfig({ testTimeout: 30_000, hookTimeout: 60_000 });
 
 import crypto from 'crypto';
 import { db, initDatabase } from '../../server/database.js';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import {
   users,
   clients,
@@ -61,18 +61,38 @@ describe.skipIf(skipIfNoDb)('OIDC API Integration', () => {
 
   beforeEach(async () => {
     // Clean test data in reverse dependency order
-    await db.delete(passwordHistory);
-    await db.delete(accountDeletionRequests);
-    await db.delete(linkedAccounts);
-    await db.delete(trustedDevices);
-    await db.delete(accessTokens);
-    await db.delete(passwordResets);
-    await db.delete(sessions);
-    await db.delete(refreshTokens);
+    await db.delete(passwordHistory).where(
+      inArray(passwordHistory.userId, db.select({ id: users.id }).from(users).where(eq(users.username, testUser.username)))
+    );
+    await db.delete(accountDeletionRequests).where(
+      inArray(accountDeletionRequests.userId, db.select({ id: users.id }).from(users).where(eq(users.username, testUser.username)))
+    );
+    await db.delete(linkedAccounts).where(
+      inArray(linkedAccounts.userId, db.select({ id: users.id }).from(users).where(eq(users.username, testUser.username)))
+    );
+    await db.delete(trustedDevices).where(
+      inArray(trustedDevices.userId, db.select({ id: users.id }).from(users).where(eq(users.username, testUser.username)))
+    );
+    // Scoped to this file's own user: access_tokens is a shared table and other
+    // integration test files run concurrently against the same database.
+    await db.delete(accessTokens).where(
+      inArray(accessTokens.userId, db.select({ id: users.id }).from(users).where(eq(users.username, testUser.username)))
+    );
+    await db.delete(passwordResets).where(
+      inArray(passwordResets.userId, db.select({ id: users.id }).from(users).where(eq(users.username, testUser.username)))
+    );
+    await db.delete(sessions).where(
+      inArray(sessions.userId, db.select({ id: users.id }).from(users).where(eq(users.username, testUser.username)))
+    );
+    await db.delete(refreshTokens).where(
+      inArray(refreshTokens.userId, db.select({ id: users.id }).from(users).where(eq(users.username, testUser.username)))
+    );
     await db.delete(authCodes);
     await db.delete(oauthStates);
     await db.delete(clients).where(eq(clients.clientId, testClient.clientId));
-    await db.delete(emailVerifications);
+    await db.delete(emailVerifications).where(
+      inArray(emailVerifications.userId, db.select({ id: users.id }).from(users).where(eq(users.username, testUser.username)))
+    );
     await db.delete(users).where(eq(users.username, testUser.username));
 
     await db.insert(clients).values(testClient);

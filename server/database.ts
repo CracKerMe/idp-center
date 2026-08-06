@@ -9,6 +9,7 @@ import { connectionString } from './config.js';
 import * as schema from './schema.js';
 import { users, tenants, clients } from './schema.js';
 import { eq } from 'drizzle-orm';
+import { ensureKeysInitialized } from './services/keys.service.js';
 
 const client = postgres(connectionString, {
   connect_timeout: 10, // fail fast if PG is unreachable
@@ -36,6 +37,7 @@ export async function initDatabase() {
   }
 
   await seedDefaults();
+  await ensureKeysInitialized();
 }
 
 async function seedDefaults() {
