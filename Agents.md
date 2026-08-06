@@ -82,8 +82,6 @@
 - `src/routeTree.gen.ts` 是生成文件，除非明确需要重新生成，否则不要手改
 - `build/`、`dist/`、`uploads/`、`node_modules/` 都不是源码编辑目标
 - `example/SESSION_MANAGEMENT.md` 当前描述的文件结构与现有 `example/` 不一致，应按历史文档处理
-- `package.json` 的 `name` 仍是 `react-example`，不要据此误判项目品牌或目录职责
-- `.env.example` 带有 AI Studio / Gemini 注释，但当前服务端运行时校验以 `server/config.ts` 为准
 
 ## 7. 默认数据与本地环境
 
