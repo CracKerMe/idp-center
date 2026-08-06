@@ -7,6 +7,8 @@ import { config } from '../config.js';
 import { logAudit } from '../utils/audit.js';
 import { encryptToken, generateOAuthState } from '../services/crypto.js';
 import { success, error, ErrorCode } from '../utils/response.js';
+import { users, linkedAccounts, oauthStates, accessTokens, sessions, refreshTokens, authCodes } from '../schema.js';
+import { eq, and, lt, desc } from 'drizzle-orm';
 
 const router = express.Router();
 
@@ -69,34 +71,63 @@ async function getGitHubEmails(accessToken: string): Promise<string | null> {
   return primary ? primary.email : null;
 }
 
-function findOrCreateUserFromGitHub(identity: GitHubIdentity, accessToken: string): any {
+async function findOrCreateUserFromGitHub(identity: GitHubIdentity, accessToken: string): Promise<any> {
   const providerUserId = String(identity.id);
   const encryptedToken = encryptToken(accessToken);
   const now = new Date().toISOString();
 
-  const existingLink = db.prepare(
-    'SELECT la.*, u.* FROM linked_accounts la JOIN users u ON la.user_id = u.id WHERE la.provider = ? AND la.provider_user_id = ?'
-  ).get('github', providerUserId) as any;
+  const [existingLink] = await db
+    .select({
+      userId: linkedAccounts.userId,
+      username: users.username,
+      email: users.email,
+      id: users.id,
+      passwordHash: users.passwordHash,
+      tenantId: users.tenantId,
+      isActive: users.isActive,
+      isAdmin: users.isAdmin,
+      otpSecret: users.otpSecret,
+      otpEnabled: users.otpEnabled,
+      createdAt: users.createdAt,
+      updatedAt: users.updatedAt,
+      fullName: users.fullName,
+      avatarUrl: users.avatarUrl,
+      phone: users.phone,
+    })
+    .from(linkedAccounts)
+    .innerJoin(users, eq(linkedAccounts.userId, users.id))
+    .where(and(eq(linkedAccounts.provider, 'github'), eq(linkedAccounts.providerUserId, providerUserId)))
+    .limit(1);
 
   if (existingLink) {
-    db.prepare(
-      'UPDATE linked_accounts SET provider_username = ?, access_token = ?, updated_at = ? WHERE provider = ? AND provider_user_id = ?'
-    ).run(identity.login, encryptedToken, now, 'github', providerUserId);
-    return db.prepare('SELECT * FROM users WHERE id = ?').get(existingLink.user_id) as any;
+    await db
+      .update(linkedAccounts)
+      .set({ providerUsername: identity.login, accessToken: encryptedToken, updatedAt: new Date(now) })
+      .where(and(eq(linkedAccounts.provider, 'github'), eq(linkedAccounts.providerUserId, providerUserId)));
+
+    const [updatedUser] = await db.select().from(users).where(eq(users.id, existingLink.userId)).limit(1);
+    return updatedUser;
   }
 
   if (identity.email) {
-    const userByEmail = db.prepare('SELECT * FROM users WHERE email = ?').get(identity.email) as any;
+    const [userByEmail] = await db.select().from(users).where(eq(users.email, identity.email)).limit(1);
     if (userByEmail) {
-      db.prepare(
-        'INSERT INTO linked_accounts (id, user_id, provider, provider_user_id, provider_username, access_token, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-      ).run(crypto.randomUUID(), userByEmail.id, 'github', providerUserId, identity.login, encryptedToken, now, now);
+      await db.insert(linkedAccounts).values({
+        id: crypto.randomUUID(),
+        userId: userByEmail.id,
+        provider: 'github',
+        providerUserId,
+        providerUsername: identity.login,
+        accessToken: encryptedToken,
+        createdAt: new Date(now),
+        updatedAt: new Date(now),
+      });
       return userByEmail;
     }
   }
 
   let username = identity.login;
-  const usernameConflict = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
+  const [usernameConflict] = await db.select({ id: users.id }).from(users).where(eq(users.username, username)).limit(1);
   if (usernameConflict) {
     username = `${username}_${crypto.randomBytes(2).toString('hex')}`;
   }
@@ -104,15 +135,30 @@ function findOrCreateUserFromGitHub(identity: GitHubIdentity, accessToken: strin
   const placeholderPasswordHash = bcrypt.hashSync('', 10);
   const newUserId = crypto.randomUUID();
 
-  db.prepare(
-    'INSERT INTO users (id, username, email, password_hash, is_active, is_admin, created_at, updated_at) VALUES (?, ?, ?, ?, 1, 0, ?, ?)'
-  ).run(newUserId, username, identity.email ?? null, placeholderPasswordHash, now, now);
+  await db.insert(users).values({
+    id: newUserId,
+    username,
+    email: identity.email ?? '',
+    passwordHash: placeholderPasswordHash,
+    isActive: true,
+    isAdmin: false,
+    createdAt: new Date(now),
+    updatedAt: new Date(now),
+  });
 
-  db.prepare(
-    'INSERT INTO linked_accounts (id, user_id, provider, provider_user_id, provider_username, access_token, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(crypto.randomUUID(), newUserId, 'github', providerUserId, identity.login, encryptedToken, now, now);
+  await db.insert(linkedAccounts).values({
+    id: crypto.randomUUID(),
+    userId: newUserId,
+    provider: 'github',
+    providerUserId,
+    providerUsername: identity.login,
+    accessToken: encryptedToken,
+    createdAt: new Date(now),
+    updatedAt: new Date(now),
+  });
 
-  return db.prepare('SELECT * FROM users WHERE id = ?').get(newUserId) as any;
+  const [newUser] = await db.select().from(users).where(eq(users.id, newUserId)).limit(1);
+  return newUser;
 }
 
 // GET /api/auth/github/config
@@ -122,7 +168,7 @@ router.get('/config', (req, res) => {
 });
 
 // GET /api/auth/github — initiate authorization
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const clientId = config.GITHUB_CLIENT_ID;
   const clientSecret = config.GITHUB_CLIENT_SECRET;
 
@@ -132,11 +178,11 @@ router.get('/', (req, res) => {
 
   const callbackUrl = config.GITHUB_CALLBACK_URL || 'http://localhost:5986/api/auth/github/callback';
 
-  db.prepare('DELETE FROM oauth_states WHERE expires_at < CURRENT_TIMESTAMP').run();
+  await db.delete(oauthStates).where(lt(oauthStates.expiresAt, new Date()));
 
   const state = generateOAuthState();
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
-  db.prepare('INSERT INTO oauth_states (state, expires_at) VALUES (?, ?)').run(state, expiresAt);
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+  await db.insert(oauthStates).values({ state, expiresAt });
 
   const authUrl = new URL('https://github.com/login/oauth/authorize');
   authUrl.searchParams.set('client_id', clientId);
@@ -157,26 +203,28 @@ router.get('/callback', async (req, res) => {
 
   if (githubError) {
     const errorDesc = githubError === 'access_denied' ? 'GitHub authorization was cancelled' : githubError;
-    logAudit(null, 'GITHUB_LOGIN_FAILED', req, `GitHub error: ${githubError}`);
+    await logAudit(null, 'GITHUB_LOGIN_FAILED', req, `GitHub error: ${githubError}`);
     return res.redirect(302, `/#/login?error=${encodeURIComponent(errorDesc)}`);
   }
 
-  const stateRecord = db.prepare(
-    'SELECT state, expires_at FROM oauth_states WHERE state = ?'
-  ).get(state) as { state: string; expires_at: string } | undefined;
+  const [stateRecord] = await db
+    .select({ state: oauthStates.state, expiresAt: oauthStates.expiresAt })
+    .from(oauthStates)
+    .where(eq(oauthStates.state, state))
+    .limit(1);
 
-  if (!stateRecord || new Date(stateRecord.expires_at) < new Date()) {
-    if (stateRecord) db.prepare('DELETE FROM oauth_states WHERE state = ?').run(state);
+  if (!stateRecord || stateRecord.expiresAt < new Date()) {
+    if (stateRecord) await db.delete(oauthStates).where(eq(oauthStates.state, state));
     return res.status(400).json(error('Invalid or expired OAuth state', ErrorCode.TOKEN_INVALID));
   }
 
-  db.prepare('DELETE FROM oauth_states WHERE state = ?').run(state);
+  await db.delete(oauthStates).where(eq(oauthStates.state, state));
 
   let githubAccessToken: string;
   try {
     githubAccessToken = await exchangeGitHubCode(code);
   } catch (err: any) {
-    logAudit(null, 'GITHUB_LOGIN_FAILED', req, `Token exchange failed: ${err.message}`);
+    await logAudit(null, 'GITHUB_LOGIN_FAILED', req, `Token exchange failed: ${err.message}`);
     return res.redirect(302, `/#/login?error=${encodeURIComponent('Failed to exchange GitHub authorization code')}`);
   }
 
@@ -186,75 +234,111 @@ router.get('/callback', async (req, res) => {
     const verifiedEmail = await getGitHubEmails(githubAccessToken);
     if (verifiedEmail) identity = { ...identity, email: verifiedEmail };
   } catch (err: any) {
-    logAudit(null, 'GITHUB_LOGIN_FAILED', req, `GitHub user info failed: ${err.message}`);
+    await logAudit(null, 'GITHUB_LOGIN_FAILED', req, `GitHub user info failed: ${err.message}`);
     return res.redirect(302, `/#/login?error=${encodeURIComponent('Failed to retrieve GitHub user information')}`);
   }
 
   let user: any;
   try {
-    user = findOrCreateUserFromGitHub(identity, githubAccessToken);
+    user = await findOrCreateUserFromGitHub(identity, githubAccessToken);
   } catch (err: any) {
-    logAudit(null, 'GITHUB_LOGIN_FAILED', req, `Account linking failed: ${err.message}`);
+    await logAudit(null, 'GITHUB_LOGIN_FAILED', req, `Account linking failed: ${err.message}`);
     return res.redirect(302, `/#/login?error=${encodeURIComponent('Failed to complete GitHub login')}`);
   }
 
   const accessToken = jwt.sign(
-    { id: user.id, username: user.username, is_admin: user.is_admin, tenant_id: user.tenant_id },
+    { id: user.id, username: user.username, is_admin: user.isAdmin, tenant_id: user.tenantId },
     config.JWT_SECRET,
     { expiresIn: '15m' }
   );
-  const accessExpiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-  db.prepare('INSERT INTO access_tokens (id, token, client_id, user_id, expires_at) VALUES (?, ?, ?, ?, ?)').run(
-    crypto.randomUUID(), accessToken, 'system', user.id, accessExpiresAt
-  );
+  const accessExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
+  await db.insert(accessTokens).values({
+    id: crypto.randomUUID(),
+    token: accessToken,
+    clientId: 'system',
+    userId: user.id,
+    expiresAt: accessExpiresAt,
+  });
 
   const refreshToken = crypto.randomBytes(32).toString('hex');
-  const refreshExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const refreshExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
   const sessionId = crypto.randomUUID();
   const userAgent = req.get('User-Agent') || '';
   const ip = req.ip || req.connection.remoteAddress || 'unknown';
-  db.prepare('INSERT INTO sessions (id, user_id, device_info, ip_address) VALUES (?, ?, ?, ?)').run(
-    sessionId, user.id, userAgent, ip
-  );
+  await db.insert(sessions).values({
+    id: sessionId,
+    userId: user.id,
+    deviceInfo: userAgent,
+    ipAddress: ip,
+  });
 
-  db.prepare('INSERT INTO refresh_tokens (id, token, user_id, client_id, expires_at) VALUES (?, ?, ?, ?, ?)').run(
-    crypto.randomUUID(), refreshToken, user.id, null, refreshExpiresAt
-  );
+  await db.insert(refreshTokens).values({
+    id: crypto.randomUUID(),
+    token: refreshToken,
+    userId: user.id,
+    clientId: null,
+    expiresAt: refreshExpiresAt,
+  });
 
-  logAudit(user.id, 'GITHUB_LOGIN_SUCCESS', req, `GitHub username: ${identity.login}`);
+  await logAudit(user.id, 'GITHUB_LOGIN_SUCCESS', req, `GitHub username: ${identity.login}`);
 
   const exchangeCode = crypto.randomBytes(32).toString('hex');
-  const exchangeExpiresAt = new Date(Date.now() + 60 * 1000).toISOString();
-  db.prepare('INSERT INTO auth_codes (id, code, client_id, user_id, redirect_uri, expires_at, scope) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
-    crypto.randomUUID(), exchangeCode, 'github-oauth', user.id, '/', exchangeExpiresAt, 'github_login'
-  );
+  const exchangeExpiresAt = new Date(Date.now() + 60 * 1000);
+  await db.insert(authCodes).values({
+    id: crypto.randomUUID(),
+    code: exchangeCode,
+    clientId: 'github-oauth',
+    userId: user.id,
+    redirectUri: '/',
+    expiresAt: exchangeExpiresAt,
+    scope: 'github_login',
+  });
 
   return res.redirect(302, `/#/?github_code=${encodeURIComponent(exchangeCode)}&session_id=${encodeURIComponent(sessionId)}`);
 });
 
 // POST /api/auth/github/exchange
-router.post('/exchange', (req, res) => {
+router.post('/exchange', async (req, res) => {
   const { code } = req.body;
   if (!code) return res.status(400).json(error('Code required', ErrorCode.VALIDATION_REQUIRED));
 
-  const authCode: any = db.prepare("SELECT * FROM auth_codes WHERE code = ? AND client_id = 'github-oauth' AND scope = 'github_login'").get(code);
+  const [authCode] = await db
+    .select()
+    .from(authCodes)
+    .where(and(eq(authCodes.code, code), eq(authCodes.clientId, 'github-oauth'), eq(authCodes.scope, 'github_login')))
+    .limit(1);
   if (!authCode) return res.status(401).json(error('Invalid code', ErrorCode.TOKEN_INVALID));
 
-  db.prepare('DELETE FROM auth_codes WHERE id = ?').run(authCode.id);
+  await db.delete(authCodes).where(eq(authCodes.id, authCode.id));
 
-  if (new Date(authCode.expires_at) < new Date()) return res.status(401).json(error('Code expired', ErrorCode.TOKEN_EXPIRED));
+  if (authCode.expiresAt < new Date()) return res.status(401).json(error('Code expired', ErrorCode.TOKEN_EXPIRED));
 
-  const accessToken: any = db.prepare("SELECT token FROM access_tokens WHERE user_id = ? AND revoked = 0 ORDER BY created_at DESC LIMIT 1").get(authCode.user_id);
-  const refreshToken: any = db.prepare("SELECT token FROM refresh_tokens WHERE user_id = ? AND revoked = 0 ORDER BY created_at DESC LIMIT 1").get(authCode.user_id);
+  const [accessTokenRecord] = await db
+    .select({ token: accessTokens.token })
+    .from(accessTokens)
+    .where(and(eq(accessTokens.userId, authCode.userId), eq(accessTokens.revoked, false)))
+    .orderBy(desc(accessTokens.createdAt))
+    .limit(1);
 
-  if (!accessToken || !refreshToken) return res.status(500).json(error('Token generation failed', ErrorCode.SERVER_ERROR));
+  const [refreshTokenRecord] = await db
+    .select({ token: refreshTokens.token })
+    .from(refreshTokens)
+    .where(and(eq(refreshTokens.userId, authCode.userId), eq(refreshTokens.revoked, false)))
+    .orderBy(desc(refreshTokens.createdAt))
+    .limit(1);
 
-  const user: any = db.prepare('SELECT id, username, email, is_admin, otp_enabled, tenant_id FROM users WHERE id = ?').get(authCode.user_id);
+  if (!accessTokenRecord || !refreshTokenRecord) return res.status(500).json(error('Token generation failed', ErrorCode.SERVER_ERROR));
+
+  const [user] = await db
+    .select({ id: users.id, username: users.username, email: users.email, isAdmin: users.isAdmin, otpEnabled: users.otpEnabled, tenantId: users.tenantId })
+    .from(users)
+    .where(eq(users.id, authCode.userId))
+    .limit(1);
 
   res.json(success({
-    access_token: accessToken.token,
-    refresh_token: refreshToken.token,
+    access_token: accessTokenRecord.token,
+    refresh_token: refreshTokenRecord.token,
     token_type: 'Bearer',
     user,
   }));

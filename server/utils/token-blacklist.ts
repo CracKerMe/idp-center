@@ -4,15 +4,17 @@
  */
 
 import { db } from '../database.js';
+import { accessTokens } from '../schema.js';
+import { eq, and, gt, lt, inArray, ne } from 'drizzle-orm';
 
 export interface TokenBlacklistEntry {
   id: string;
   token: string;
   user_id: string;
-  revoked: number;
-  revoked_at: string | null;
+  revoked: boolean;
+  revoked_at: Date | null;
   revoke_reason: string | null;
-  expires_at: string;
+  expires_at: Date;
 }
 
 export enum RevokeReason {
@@ -27,18 +29,17 @@ export enum RevokeReason {
 /**
  * Revoke a specific access token
  */
-export function revokeToken(
+export async function revokeToken(
   token: string,
   reason: RevokeReason = RevokeReason.LOGOUT
-): boolean {
+): Promise<boolean> {
   try {
-    const result = db.prepare(`
-      UPDATE access_tokens 
-      SET revoked = 1, revoked_at = ?, revoke_reason = ?
-      WHERE token = ? AND revoked = 0
-    `).run(new Date().toISOString(), reason, token);
-    
-    return result.changes > 0;
+    const result = await db
+      .update(accessTokens)
+      .set({ revoked: true, revokedAt: new Date(), revokeReason: reason })
+      .where(and(eq(accessTokens.token, token), eq(accessTokens.revoked, false)));
+
+    return ((result as any).rowCount ?? 0) > 0;
   } catch (error) {
     console.error('Failed to revoke token:', error);
     return false;
@@ -48,29 +49,30 @@ export function revokeToken(
 /**
  * Check if a token is revoked
  */
-export function isTokenRevoked(token: string): boolean {
-  const record = db.prepare(`
-    SELECT revoked FROM access_tokens WHERE token = ?
-  `).get(token) as { revoked: number } | undefined;
-  
-  return !record || record.revoked === 1;
+export async function isTokenRevoked(token: string): Promise<boolean> {
+  const [record] = await db
+    .select({ revoked: accessTokens.revoked })
+    .from(accessTokens)
+    .where(eq(accessTokens.token, token))
+    .limit(1);
+
+  return !record || record.revoked === true;
 }
 
 /**
  * Revoke all tokens for a specific user
  */
-export function revokeAllUserTokens(
+export async function revokeAllUserTokens(
   userId: string,
   reason: RevokeReason = RevokeReason.SESSION_INVALIDATION
-): number {
+): Promise<number> {
   try {
-    const result = db.prepare(`
-      UPDATE access_tokens 
-      SET revoked = 1, revoked_at = ?, revoke_reason = ?
-      WHERE user_id = ? AND revoked = 0
-    `).run(new Date().toISOString(), reason, userId);
-    
-    return result.changes;
+    const result = await db
+      .update(accessTokens)
+      .set({ revoked: true, revokedAt: new Date(), revokeReason: reason })
+      .where(and(eq(accessTokens.userId, userId), eq(accessTokens.revoked, false)));
+
+    return (result as any).rowCount ?? 0;
   } catch (error) {
     console.error('Failed to revoke user tokens:', error);
     return 0;
@@ -80,19 +82,22 @@ export function revokeAllUserTokens(
 /**
  * Revoke all tokens for a user except the current one
  */
-export function revokeOtherUserTokens(
+export async function revokeOtherUserTokens(
   userId: string,
   currentToken: string,
   reason: RevokeReason = RevokeReason.SESSION_INVALIDATION
-): number {
+): Promise<number> {
   try {
-    const result = db.prepare(`
-      UPDATE access_tokens 
-      SET revoked = 1, revoked_at = ?, revoke_reason = ?
-      WHERE user_id = ? AND token != ? AND revoked = 0
-    `).run(new Date().toISOString(), reason, userId, currentToken);
-    
-    return result.changes;
+    const result = await db
+      .update(accessTokens)
+      .set({ revoked: true, revokedAt: new Date(), revokeReason: reason })
+      .where(and(
+        eq(accessTokens.userId, userId),
+        ne(accessTokens.token, currentToken),
+        eq(accessTokens.revoked, false)
+      ));
+
+    return (result as any).rowCount ?? 0;
   } catch (error) {
     console.error('Failed to revoke other user tokens:', error);
     return 0;
@@ -102,36 +107,77 @@ export function revokeOtherUserTokens(
 /**
  * Get all active (non-revoked) tokens for a user
  */
-export function getActiveTokensForUser(userId: string): TokenBlacklistEntry[] {
-  return db.prepare(`
-    SELECT id, token, user_id, revoked, revoked_at, revoke_reason, expires_at
-    FROM access_tokens 
-    WHERE user_id = ? AND revoked = 0 AND expires_at > ?
-    ORDER BY expires_at DESC
-  `).all(userId, new Date().toISOString()) as TokenBlacklistEntry[];
+export async function getActiveTokensForUser(userId: string): Promise<TokenBlacklistEntry[]> {
+  const rows = await db
+    .select({
+      id: accessTokens.id,
+      token: accessTokens.token,
+      userId: accessTokens.userId,
+      revoked: accessTokens.revoked,
+      revokedAt: accessTokens.revokedAt,
+      revokeReason: accessTokens.revokeReason,
+      expiresAt: accessTokens.expiresAt,
+    })
+    .from(accessTokens)
+    .where(and(
+      eq(accessTokens.userId, userId),
+      eq(accessTokens.revoked, false),
+      gt(accessTokens.expiresAt, new Date())
+    ))
+    .orderBy(accessTokens.expiresAt);
+
+  return rows.map(r => ({
+    id: r.id,
+    token: r.token,
+    user_id: r.userId,
+    revoked: r.revoked ?? false,
+    revoked_at: r.revokedAt,
+    revoke_reason: r.revokeReason,
+    expires_at: r.expiresAt,
+  }));
 }
 
 /**
  * Get revocation history for a token
  */
-export function getTokenRevocationInfo(token: string): TokenBlacklistEntry | null {
-  return db.prepare(`
-    SELECT id, token, user_id, revoked, revoked_at, revoke_reason, expires_at
-    FROM access_tokens WHERE token = ?
-  `).get(token) as TokenBlacklistEntry | null;
+export async function getTokenRevocationInfo(token: string): Promise<TokenBlacklistEntry | null> {
+  const [row] = await db
+    .select({
+      id: accessTokens.id,
+      token: accessTokens.token,
+      userId: accessTokens.userId,
+      revoked: accessTokens.revoked,
+      revokedAt: accessTokens.revokedAt,
+      revokeReason: accessTokens.revokeReason,
+      expiresAt: accessTokens.expiresAt,
+    })
+    .from(accessTokens)
+    .where(eq(accessTokens.token, token))
+    .limit(1);
+
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    token: row.token,
+    user_id: row.userId,
+    revoked: row.revoked ?? false,
+    revoked_at: row.revokedAt,
+    revoke_reason: row.revokeReason,
+    expires_at: row.expiresAt,
+  };
 }
 
 /**
  * Cleanup expired revoked tokens (can be called periodically)
  */
-export function cleanupRevokedTokens(): number {
+export async function cleanupRevokedTokens(): Promise<number> {
   try {
-    const result = db.prepare(`
-      DELETE FROM access_tokens 
-      WHERE revoked = 1 AND expires_at < ?
-    `).run(new Date().toISOString());
-    
-    return result.changes;
+    const result = await db
+      .delete(accessTokens)
+      .where(and(eq(accessTokens.revoked, true), lt(accessTokens.expiresAt, new Date())));
+
+    return (result as any).rowCount ?? 0;
   } catch (error) {
     console.error('Failed to cleanup revoked tokens:', error);
     return 0;
@@ -141,21 +187,19 @@ export function cleanupRevokedTokens(): number {
 /**
  * Batch revoke tokens by user IDs (for admin use)
  */
-export function batchRevokeByUserIds(
+export async function batchRevokeByUserIds(
   userIds: string[],
   reason: RevokeReason = RevokeReason.ADMIN_REVOCATION
-): number {
+): Promise<number> {
   if (userIds.length === 0) return 0;
-  
+
   try {
-    const placeholders = userIds.map(() => '?').join(',');
-    const result = db.prepare(`
-      UPDATE access_tokens 
-      SET revoked = 1, revoked_at = ?, revoke_reason = ?
-      WHERE user_id IN (${placeholders}) AND revoked = 0
-    `).run(new Date().toISOString(), reason, ...userIds);
-    
-    return result.changes;
+    const result = await db
+      .update(accessTokens)
+      .set({ revoked: true, revokedAt: new Date(), revokeReason: reason })
+      .where(and(inArray(accessTokens.userId, userIds), eq(accessTokens.revoked, false)));
+
+    return (result as any).rowCount ?? 0;
   } catch (error) {
     console.error('Failed to batch revoke tokens:', error);
     return 0;

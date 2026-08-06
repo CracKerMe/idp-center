@@ -13,3 +13,7 @@ src/routeTree.gen.ts
 .tanstack
 
 uploads/
+
+# SQLite (replaced by PostgreSQL)
+*.db
+*.db-journal

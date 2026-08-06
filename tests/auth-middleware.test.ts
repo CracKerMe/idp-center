@@ -7,7 +7,6 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import jwt from 'jsonwebtoken';
-import Database from 'better-sqlite3';
 
 const TEST_SECRET = 'test-jwt-secret-for-testing-purposes32ch';
 

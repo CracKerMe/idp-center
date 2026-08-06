@@ -52,9 +52,6 @@ COPY --chown=nonroot:nonroot --from=builder /app/node_modules ./node_modules
 COPY --chown=nonroot:nonroot --from=builder /app/dist ./dist
 COPY --chown=nonroot:nonroot --from=builder /app/build ./build
 
-# 复制数据库文件
-COPY --chown=nonroot:nonroot auth.db ./auth.db
-
 # 设置环境变量
 ENV NODE_ENV=production
 ENV PORT=5986

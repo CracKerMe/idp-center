@@ -4,7 +4,6 @@ import { z } from 'zod';
 // ─── Re-declare the EnvSchema inline (mirrors server/config.ts exactly) ───────
 const EnvSchema = z.object({
   JWT_SECRET: z.string().min(32, 'JWT_SECRET 至少需要 32 个字符'),
-  JWT_REFRESH_SECRET: z.string().min(32, 'JWT_REFRESH_SECRET 至少需要 32 个字符'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.coerce.number().default(5986),
   APP_URL: z.url().default('http://localhost:5986'),
@@ -24,7 +23,6 @@ describe('Config / EnvSchema', () => {
 
   const validEnv = () => ({
     JWT_SECRET: 'a'.repeat(32),
-    JWT_REFRESH_SECRET: 'b'.repeat(32),
     NODE_ENV: 'test',
     PORT: '5986',
     APP_URL: 'http://localhost:5986',
@@ -121,20 +119,6 @@ describe('Config / EnvSchema', () => {
       
       const result = EnvSchema.safeParse(env);
       expect(result.success).toBe(false);
-    });
-  });
-
-  describe('JWT_REFRESH_SECRET validation', () => {
-    it('rejects JWT_REFRESH_SECRET shorter than 32 characters', () => {
-      const env = { ...validEnv(), JWT_REFRESH_SECRET: 'short' };
-      const result = EnvSchema.safeParse(env);
-      expect(result.success).toBe(false);
-    });
-
-    it('accepts JWT_REFRESH_SECRET of exactly 32 characters', () => {
-      const env = { ...validEnv(), JWT_REFRESH_SECRET: 'b'.repeat(32) };
-      const result = EnvSchema.safeParse(env);
-      expect(result.success).toBe(true);
     });
   });
 

@@ -12,6 +12,35 @@ import { revokeAllUserTokens, RevokeReason } from '../utils/token-blacklist.js';
 import { getTenantPasswordPolicy } from '../services/password-policy.service.js';
 import { parseCidr } from '../middleware/ip-whitelist.js';
 import {
+  users,
+  clients,
+  tenants,
+  auditLogs,
+  sessions,
+  refreshTokens,
+  accessTokens,
+  tenantPasswordPolicies,
+  tenantIpWhitelist,
+  passwordResets,
+} from '../schema.js';
+import {
+  eq,
+  and,
+  or,
+  like,
+  ilike,
+  lt,
+  gt,
+  gte,
+  lte,
+  desc,
+  asc,
+  count,
+  sql,
+  getTableColumns,
+  ne,
+} from 'drizzle-orm';
+import {
   userIdParamsSchema,
   adminCreateUserSchema,
   adminUpdateUserSchema,
@@ -29,38 +58,45 @@ import {
 const router = express.Router();
 
 // GET /api/admin/users
-router.get('/users', authenticateAdmin, validate({ query: listUsersQuerySchema }), (req, res) => {
+router.get('/users', authenticateAdmin, validate({ query: listUsersQuerySchema }), async (req, res) => {
   const { page, pageSize, search, tenant_id, is_active } = req.query as any;
   const offset = (page - 1) * pageSize;
 
-  let whereClause = 'WHERE 1=1';
-  const params: any[] = [];
+  const conditions: any[] = [];
 
   if (search) {
-    whereClause += ' AND (username LIKE ? OR email LIKE ?)';
-    params.push(`%${search}%`, `%${search}%`);
+    conditions.push(or(ilike(users.username, `%${search}%`), ilike(users.email, `%${search}%`)));
   }
   if (tenant_id) {
-    whereClause += ' AND tenant_id = ?';
-    params.push(tenant_id);
+    conditions.push(eq(users.tenantId, tenant_id));
   }
   if (is_active !== undefined) {
-    whereClause += ' AND is_active = ?';
-    params.push(is_active);
+    conditions.push(eq(users.isActive, is_active));
   }
 
-  const countQuery = `SELECT COUNT(*) as total FROM users ${whereClause}`;
-  const total = (db.prepare(countQuery).get(...params) as any).total;
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
 
-  const dataQuery = `
-    SELECT id, username, email, full_name, is_active, is_admin, otp_enabled, tenant_id, created_at
-    FROM users ${whereClause}
-    ORDER BY created_at DESC
-    LIMIT ? OFFSET ?
-  `;
-  const users = db.prepare(dataQuery).all(...params, pageSize, offset);
+  const [{ total }] = await db.select({ total: count() }).from(users).where(where);
 
-  res.json(paginated(users, total, page, pageSize));
+  const userList = await db
+    .select({
+      id: users.id,
+      username: users.username,
+      email: users.email,
+      fullName: users.fullName,
+      isActive: users.isActive,
+      isAdmin: users.isAdmin,
+      otpEnabled: users.otpEnabled,
+      tenantId: users.tenantId,
+      createdAt: users.createdAt,
+    })
+    .from(users)
+    .where(where)
+    .orderBy(desc(users.createdAt))
+    .limit(pageSize)
+    .offset(offset);
+
+  res.json(paginated(userList, Number(total), page, pageSize));
 });
 
 // POST /api/admin/users
@@ -71,12 +107,21 @@ router.post('/users', authenticateAdmin, validate({ body: adminCreateUserSchema 
     const password_hash = await bcrypt.hash(password, 10);
     const userId = crypto.randomUUID();
 
-    db.prepare(
-      'INSERT INTO users (id, username, email, password_hash, full_name, phone, is_admin, tenant_id, email_verified, email_verified_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)'
-    ).run(userId, username, email, password_hash, full_name || null, phone || null, is_admin ? 1 : 0, tenant_id || 'default', new Date().toISOString());
+    await db.insert(users).values({
+      id: userId,
+      username,
+      email,
+      passwordHash: password_hash,
+      fullName: full_name || null,
+      phone: phone || null,
+      isAdmin: is_admin || false,
+      tenantId: tenant_id || 'default',
+      emailVerified: true,
+      emailVerifiedAt: new Date(),
+    });
 
-    logAudit(
-      (req as any).user.id,
+    await logAudit(
+      req.user!.id,
       'admin_create_user',
       req,
       JSON.stringify({ created_username: username, created_email: email, is_admin })
@@ -84,7 +129,7 @@ router.post('/users', authenticateAdmin, validate({ body: adminCreateUserSchema 
 
     res.json(success({ id: userId }, 'User created successfully'));
   } catch (err: any) {
-    if (err.message.includes('UNIQUE constraint failed')) {
+    if (err.message?.includes('duplicate key') || err.message?.includes('UNIQUE constraint failed')) {
       return res.status(400).json(error('Username or email already exists', ErrorCode.RESOURCE_ALREADY_EXISTS));
     }
     res.status(500).json(error('Internal server error', ErrorCode.SERVER_ERROR));
@@ -92,77 +137,74 @@ router.post('/users', authenticateAdmin, validate({ body: adminCreateUserSchema 
 });
 
 // PUT /api/admin/users/:userId
-router.put('/users/:userId', authenticateAdmin, validate({ params: userIdParamsSchema, body: adminUpdateUserSchema }), (req, res) => {
+router.put('/users/:userId', authenticateAdmin, validate({ params: userIdParamsSchema, body: adminUpdateUserSchema }), async (req, res) => {
   const { userId } = req.params;
   const updates = req.body;
 
-  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
+  const [user] = await db.select({ id: users.id }).from(users).where(eq(users.id, userId)).limit(1);
   if (!user) return res.status(404).json(error('User not found', ErrorCode.RESOURCE_NOT_FOUND));
 
-  const setClauses: string[] = [];
-  const params: any[] = [];
+  const updateData: Record<string, any> = {};
 
-  if (updates.username !== undefined) { setClauses.push('username = ?'); params.push(updates.username); }
-  if (updates.email !== undefined) { setClauses.push('email = ?'); params.push(updates.email); }
-  if (updates.full_name !== undefined) { setClauses.push('full_name = ?'); params.push(updates.full_name); }
-  if (updates.phone !== undefined) { setClauses.push('phone = ?'); params.push(updates.phone); }
+  if (updates.username !== undefined) updateData.username = updates.username;
+  if (updates.email !== undefined) updateData.email = updates.email;
+  if (updates.full_name !== undefined) updateData.fullName = updates.full_name;
+  if (updates.phone !== undefined) updateData.phone = updates.phone;
   if (updates.is_admin !== undefined) {
-    setClauses.push('is_admin = ?');
-    params.push(updates.is_admin ? 1 : 0);
+    updateData.isAdmin = updates.is_admin;
     if (updates.is_admin) {
-      setClauses.push('email_verified = 1');
-      setClauses.push('email_verified_at = ?');
-      params.push(new Date().toISOString());
+      updateData.emailVerified = true;
+      updateData.emailVerifiedAt = new Date();
     }
   }
-  if (updates.is_active !== undefined) { setClauses.push('is_active = ?'); params.push(updates.is_active ? 1 : 0); }
-  if (updates.tenant_id !== undefined) { setClauses.push('tenant_id = ?'); params.push(updates.tenant_id); }
+  if (updates.is_active !== undefined) updateData.isActive = updates.is_active;
+  if (updates.tenant_id !== undefined) updateData.tenantId = updates.tenant_id;
 
-  if (setClauses.length === 0) return res.status(400).json(error('No fields to update', ErrorCode.VALIDATION_ERROR));
+  if (Object.keys(updateData).length === 0) return res.status(400).json(error('No fields to update', ErrorCode.VALIDATION_ERROR));
 
-  params.push(userId);
-  db.prepare(`UPDATE users SET ${setClauses.join(', ')} WHERE id = ?`).run(...params);
+  updateData.updatedAt = new Date();
+  await db.update(users).set(updateData).where(eq(users.id, userId));
 
-  logAudit((req as any).user.id, 'admin_update_user', req, JSON.stringify({ target_user_id: userId, updates }));
+  await logAudit(req.user!.id, 'admin_update_user', req, JSON.stringify({ target_user_id: userId, updates }));
   res.json(message('User updated successfully'));
 });
 
 // DELETE /api/admin/users/:userId
-router.delete('/users/:userId', authenticateAdmin, validate({ params: userIdParamsSchema }), (req, res) => {
+router.delete('/users/:userId', authenticateAdmin, validate({ params: userIdParamsSchema }), async (req, res) => {
   const { userId } = req.params;
 
-  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
+  const [user] = await db.select({ id: users.id }).from(users).where(eq(users.id, userId)).limit(1);
   if (!user) return res.status(404).json(error('User not found', ErrorCode.RESOURCE_NOT_FOUND));
 
-  db.prepare('UPDATE users SET is_active = 0 WHERE id = ?').run(userId);
-  logAudit((req as any).user.id, 'admin_delete_user', req, JSON.stringify({ target_user_id: userId }));
+  await db.update(users).set({ isActive: false, updatedAt: new Date() }).where(eq(users.id, userId));
+  await logAudit(req.user!.id, 'admin_delete_user', req, JSON.stringify({ target_user_id: userId }));
   res.json(message('User deactivated successfully'));
 });
 
 // POST /api/admin/users/:userId/ban
-router.post('/users/:userId/ban', authenticateAdmin, validate({ params: userIdParamsSchema }), (req, res) => {
+router.post('/users/:userId/ban', authenticateAdmin, validate({ params: userIdParamsSchema }), async (req, res) => {
   const { userId } = req.params;
 
-  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
+  const [user] = await db.select({ id: users.id }).from(users).where(eq(users.id, userId)).limit(1);
   if (!user) return res.status(404).json(error('User not found', ErrorCode.RESOURCE_NOT_FOUND));
 
-  db.prepare('UPDATE users SET is_active = 0 WHERE id = ?').run(userId);
-  revokeAllUserTokens(userId, RevokeReason.ACCOUNT_DISABLED);
-  db.prepare('UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ?').run(userId);
+  await db.update(users).set({ isActive: false, updatedAt: new Date() }).where(eq(users.id, userId));
+  await revokeAllUserTokens(userId, RevokeReason.ACCOUNT_DISABLED);
+  await db.update(refreshTokens).set({ revoked: true }).where(eq(refreshTokens.userId, userId));
 
-  logAudit((req as any).user.id, 'admin_ban_user', req, JSON.stringify({ target_user_id: userId }));
+  await logAudit(req.user!.id, 'admin_ban_user', req, JSON.stringify({ target_user_id: userId }));
   res.json(message('User banned successfully'));
 });
 
 // POST /api/admin/users/:userId/unban
-router.post('/users/:userId/unban', authenticateAdmin, validate({ params: userIdParamsSchema }), (req, res) => {
+router.post('/users/:userId/unban', authenticateAdmin, validate({ params: userIdParamsSchema }), async (req, res) => {
   const { userId } = req.params;
 
-  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
+  const [user] = await db.select({ id: users.id }).from(users).where(eq(users.id, userId)).limit(1);
   if (!user) return res.status(404).json(error('User not found', ErrorCode.RESOURCE_NOT_FOUND));
 
-  db.prepare('UPDATE users SET is_active = 1 WHERE id = ?').run(userId);
-  logAudit((req as any).user.id, 'admin_unban_user', req, JSON.stringify({ target_user_id: userId }));
+  await db.update(users).set({ isActive: true, updatedAt: new Date() }).where(eq(users.id, userId));
+  await logAudit(req.user!.id, 'admin_unban_user', req, JSON.stringify({ target_user_id: userId }));
   res.json(message('User unbanned successfully'));
 });
 
@@ -170,20 +212,28 @@ router.post('/users/:userId/unban', authenticateAdmin, validate({ params: userId
 router.post('/users/:userId/reset-password', authenticateAdmin, validate({ params: userIdParamsSchema }), async (req, res) => {
   const { userId } = req.params;
 
-  const user = db.prepare('SELECT id, email, username FROM users WHERE id = ?').get(userId) as any;
+  const [user] = await db
+    .select({ id: users.id, email: users.email, username: users.username })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
   if (!user) return res.status(404).json(error('User not found', ErrorCode.RESOURCE_NOT_FOUND));
 
   try {
     const resetToken = crypto.randomBytes(32).toString('hex');
-    const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
 
-    db.prepare('INSERT INTO password_resets (id, user_id, token, expires_at) VALUES (?, ?, ?, ?)').run(
-      crypto.randomUUID(), userId, resetToken, expiresAt
-    );
+    await db.insert(passwordResets).values({
+      id: crypto.randomUUID(),
+      userId,
+      token: resetToken,
+      expiresAt,
+    });
 
     await emailService.sendPasswordResetEmail(user.email, resetToken, user.username);
 
-    logAudit((req as any).user.id, 'admin_reset_password', req, JSON.stringify({ target_user_id: userId }));
+    await logAudit(req.user!.id, 'admin_reset_password', req, JSON.stringify({ target_user_id: userId }));
     res.json(message('Password reset email sent'));
   } catch (err) {
     res.status(500).json(error('Internal server error', 'SERVER_ERROR'));
@@ -191,301 +241,374 @@ router.post('/users/:userId/reset-password', authenticateAdmin, validate({ param
 });
 
 // GET /api/admin/clients
-router.get('/clients', authenticateAdmin, (req, res) => {
-  const tenantId = (req as any).tenantId;
-  const clients = db.prepare('SELECT id, client_id, client_name, redirect_uris, grant_types, tenant_id, created_at FROM clients WHERE tenant_id = ? ORDER BY created_at DESC').all(tenantId);
-  res.json(success(clients));
+router.get('/clients', authenticateAdmin, async (req, res) => {
+  const tenantId = req.tenantId;
+  const clientList = await db
+    .select({
+      id: clients.id,
+      clientId: clients.clientId,
+      clientName: clients.clientName,
+      redirectUris: clients.redirectUris,
+      grantTypes: clients.grantTypes,
+      tenantId: clients.tenantId,
+      createdAt: clients.createdAt,
+    })
+    .from(clients)
+    .where(eq(clients.tenantId, tenantId))
+    .orderBy(desc(clients.createdAt));
+
+  res.json(success(clientList));
 });
 
 // POST /api/admin/clients
-router.post('/clients', authenticateAdmin, validate({ body: createClientSchema }), (req, res) => {
+router.post('/clients', authenticateAdmin, validate({ body: createClientSchema }), async (req, res) => {
   const { client_name, redirect_uris, grant_types } = req.body;
-  const tenantId = (req as any).tenantId;
+  const tenantId = req.tenantId;
   const client_id = crypto.randomBytes(8).toString('hex');
   const client_secret = crypto.randomBytes(16).toString('hex');
   const id = crypto.randomUUID();
 
-  db.prepare('INSERT INTO clients (id, client_id, client_secret, client_name, redirect_uris, grant_types, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
-    id, client_id, client_secret, client_name, redirect_uris, grant_types || 'authorization_code', tenantId
-  );
-  
-  logAudit((req as any).user.id, 'admin_create_client', req, JSON.stringify({ client_id, client_name }), tenantId);
+  await db.insert(clients).values({
+    id,
+    clientId: client_id,
+    clientSecret: client_secret,
+    clientName: client_name,
+    redirectUris: redirect_uris,
+    grantTypes: grant_types || 'authorization_code',
+    tenantId,
+  });
+
+  await logAudit(req.user!.id, 'admin_create_client', req, JSON.stringify({ client_id, client_name }), tenantId);
   res.json(success({ client_id, client_secret }, 'Client created successfully'));
 });
 
 // PUT /api/admin/clients/:clientId
-router.put('/clients/:clientId', authenticateAdmin, validate({ params: clientIdParamsSchema, body: updateClientSchema }), (req, res) => {
+router.put('/clients/:clientId', authenticateAdmin, validate({ params: clientIdParamsSchema, body: updateClientSchema }), async (req, res) => {
   const { clientId } = req.params;
   const updates = req.body;
-  const tenantId = (req as any).tenantId;
- 
-  const client = db.prepare('SELECT id FROM clients WHERE client_id = ? AND tenant_id = ?').get(clientId, tenantId);
+  const tenantId = req.tenantId;
+
+  const [client] = await db
+    .select({ id: clients.id })
+    .from(clients)
+    .where(and(eq(clients.clientId, clientId), eq(clients.tenantId, tenantId)))
+    .limit(1);
+
   if (!client) return res.status(404).json(error('Client not found', ErrorCode.RESOURCE_NOT_FOUND));
 
-  const setClauses: string[] = [];
-  const params: any[] = [];
+  const updateData: Record<string, any> = {};
 
-  if (updates.client_name !== undefined) { setClauses.push('client_name = ?'); params.push(updates.client_name); }
+  if (updates.client_name !== undefined) updateData.clientName = updates.client_name;
   if (updates.redirect_uris !== undefined) {
-    setClauses.push('redirect_uris = ?');
-    params.push(typeof updates.redirect_uris === 'string' ? updates.redirect_uris : JSON.stringify(updates.redirect_uris));
+    updateData.redirectUris = typeof updates.redirect_uris === 'string' ? updates.redirect_uris : JSON.stringify(updates.redirect_uris);
   }
-  if (updates.grant_types !== undefined) { setClauses.push('grant_types = ?'); params.push(updates.grant_types); }
+  if (updates.grant_types !== undefined) updateData.grantTypes = updates.grant_types;
 
-  if (setClauses.length === 0) return res.status(400).json(error('No fields to update', ErrorCode.VALIDATION_ERROR));
+  if (Object.keys(updateData).length === 0) return res.status(400).json(error('No fields to update', ErrorCode.VALIDATION_ERROR));
 
-  params.push(clientId, tenantId);
-  db.prepare(`UPDATE clients SET ${setClauses.join(', ')} WHERE client_id = ? AND tenant_id = ?`).run(...params);
- 
-  logAudit((req as any).user.id, 'admin_update_client', req, JSON.stringify({ client_id: clientId }), tenantId);
+  await db.update(clients).set(updateData).where(and(eq(clients.clientId, clientId), eq(clients.tenantId, tenantId)));
+
+  await logAudit(req.user!.id, 'admin_update_client', req, JSON.stringify({ client_id: clientId }), tenantId);
   res.json(message('Client updated successfully'));
 });
 
 // DELETE /api/admin/clients/:clientId
-router.delete('/clients/:clientId', authenticateAdmin, validate({ params: clientIdParamsSchema }), (req, res) => {
+router.delete('/clients/:clientId', authenticateAdmin, validate({ params: clientIdParamsSchema }), async (req, res) => {
   const { clientId } = req.params;
-  const tenantId = (req as any).tenantId;
- 
-  const client = db.prepare('SELECT id FROM clients WHERE client_id = ? AND tenant_id = ?').get(clientId, tenantId);
+  const tenantId = req.tenantId;
+
+  const [client] = await db
+    .select({ id: clients.id })
+    .from(clients)
+    .where(and(eq(clients.clientId, clientId), eq(clients.tenantId, tenantId)))
+    .limit(1);
+
   if (!client) return res.status(404).json(error('Client not found', ErrorCode.RESOURCE_NOT_FOUND));
- 
-  db.prepare('DELETE FROM clients WHERE client_id = ? AND tenant_id = ?').run(clientId, tenantId);
-  logAudit((req as any).user.id, 'admin_delete_client', req, JSON.stringify({ client_id: clientId }), tenantId);
+
+  await db.delete(clients).where(and(eq(clients.clientId, clientId), eq(clients.tenantId, tenantId)));
+  await logAudit(req.user!.id, 'admin_delete_client', req, JSON.stringify({ client_id: clientId }), tenantId);
   res.json(message('Client deleted successfully'));
 });
 
 // POST /api/admin/clients/:clientId/rotate-secret
-router.post('/clients/:clientId/rotate-secret', authenticateAdmin, validate({ params: clientIdParamsSchema }), (req, res) => {
+router.post('/clients/:clientId/rotate-secret', authenticateAdmin, validate({ params: clientIdParamsSchema }), async (req, res) => {
   const { clientId } = req.params;
-  const tenantId = (req as any).tenantId;
- 
-  const client = db.prepare('SELECT id FROM clients WHERE client_id = ? AND tenant_id = ?').get(clientId, tenantId);
+  const tenantId = req.tenantId;
+
+  const [client] = await db
+    .select({ id: clients.id })
+    .from(clients)
+    .where(and(eq(clients.clientId, clientId), eq(clients.tenantId, tenantId)))
+    .limit(1);
+
   if (!client) return res.status(404).json(error('Client not found', ErrorCode.RESOURCE_NOT_FOUND));
- 
+
   const newSecret = crypto.randomBytes(16).toString('hex');
-  db.prepare('UPDATE clients SET client_secret = ? WHERE client_id = ? AND tenant_id = ?').run(newSecret, clientId, tenantId);
- 
-  logAudit((req as any).user.id, 'admin_rotate_client_secret', req, JSON.stringify({ client_id: clientId }), tenantId);
+  await db.update(clients).set({ clientSecret: newSecret }).where(and(eq(clients.clientId, clientId), eq(clients.tenantId, tenantId)));
+
+  await logAudit(req.user!.id, 'admin_rotate_client_secret', req, JSON.stringify({ client_id: clientId }), tenantId);
   res.json(success({ client_secret: newSecret }, 'Secret rotated successfully'));
 });
 
 // GET /api/admin/audit
-router.get('/audit', authenticateAdmin, (req, res) => {
+router.get('/audit', authenticateAdmin, async (req, res) => {
   const { action, user_id, start_date, end_date, page = '1', pageSize = '50' } = req.query;
-  const tenantId = (req as any).tenantId;
+  const tenantId = req.tenantId;
 
   const pageNum = Math.max(1, parseInt(page as string) || 1);
   const pageSizeNum = Math.min(200, Math.max(1, parseInt(pageSize as string) || 50));
   const offset = (pageNum - 1) * pageSizeNum;
 
-  let whereClause = 'WHERE 1=1';
-  const params: any[] = [];
+  const conditions: any[] = [];
 
-  if (action) { whereClause += ' AND a.action = ?'; params.push(action); }
-  if (user_id) { whereClause += ' AND a.user_id = ?'; params.push(user_id); }
-  if (start_date) { whereClause += ' AND a.created_at >= ?'; params.push(start_date); }
-  if (end_date) { whereClause += ' AND a.created_at <= ?'; params.push(end_date); }
+  if (action) conditions.push(eq(auditLogs.action, action as string));
+  if (user_id) conditions.push(eq(auditLogs.userId, user_id as string));
+  if (start_date) conditions.push(gte(auditLogs.createdAt, new Date(start_date as string)));
+  if (end_date) conditions.push(lte(auditLogs.createdAt, new Date(end_date as string)));
 
-  const countQuery = `SELECT COUNT(*) as total FROM audit_logs a ${whereClause}`;
-  const total = (db.prepare(countQuery).get(...params) as any).total;
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
 
-  const dataQuery = `
-    SELECT a.*, u.username
-    FROM audit_logs a
-    LEFT JOIN users u ON a.user_id = u.id
-    ${whereClause}
-    ORDER BY a.created_at DESC
-    LIMIT ? OFFSET ?
-  `;
-  const logs = db.prepare(dataQuery).all(...params, pageSizeNum, offset);
+  const [{ total }] = await db.select({ total: count() }).from(auditLogs).where(where);
 
-  res.json(paginated(logs, total, pageNum, pageSizeNum));
+  const logs = await db
+    .select({
+      ...getTableColumns(auditLogs),
+      username: users.username,
+    })
+    .from(auditLogs)
+    .leftJoin(users, eq(auditLogs.userId, users.id))
+    .where(where)
+    .orderBy(desc(auditLogs.createdAt))
+    .limit(pageSizeNum)
+    .offset(offset);
+
+  res.json(paginated(logs, Number(total), pageNum, pageSizeNum));
 });
 
 // GET /api/admin/audit/filter
-router.get('/audit/filter', authenticateAdmin, (req, res) => {
+router.get('/audit/filter', authenticateAdmin, async (req, res) => {
   const { action, user_id, tenant_id, start_date, end_date, limit } = req.query;
   const limitNum = Math.min(500, Math.max(1, parseInt(limit as string) || 100));
 
-  let query = `
-    SELECT a.*, u.username, t.name as tenant_name
-    FROM audit_logs a
-    LEFT JOIN users u ON a.user_id = u.id
-    LEFT JOIN tenants t ON a.tenant_id = t.id
-    WHERE 1=1
-  `;
-  const params: any[] = [];
+  const conditions: any[] = [];
 
-  if (action) { query += ' AND a.action = ?'; params.push(action); }
-  if (user_id) { query += ' AND a.user_id = ?'; params.push(user_id); }
-  if (tenant_id) { query += ' AND a.tenant_id = ?'; params.push(tenant_id); }
-  if (start_date) { query += ' AND a.created_at >= ?'; params.push(start_date); }
-  if (end_date) { query += ' AND a.created_at <= ?'; params.push(end_date); }
+  if (action) conditions.push(eq(auditLogs.action, action as string));
+  if (user_id) conditions.push(eq(auditLogs.userId, user_id as string));
+  if (tenant_id) conditions.push(eq(auditLogs.tenantId, tenant_id as string));
+  if (start_date) conditions.push(gte(auditLogs.createdAt, new Date(start_date as string)));
+  if (end_date) conditions.push(lte(auditLogs.createdAt, new Date(end_date as string)));
 
-  query += ' ORDER BY a.created_at DESC LIMIT ?';
-  params.push(limitNum);
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
 
-  res.json(success(db.prepare(query).all(...params)));
+  const logs = await db
+    .select({
+      ...getTableColumns(auditLogs),
+      username: users.username,
+      tenantName: tenants.name,
+    })
+    .from(auditLogs)
+    .leftJoin(users, eq(auditLogs.userId, users.id))
+    .leftJoin(tenants, eq(auditLogs.tenantId, tenants.id))
+    .where(where)
+    .orderBy(desc(auditLogs.createdAt))
+    .limit(limitNum);
+
+  res.json(success(logs));
 });
 
 // GET /api/admin/audit/actions
-router.get('/audit/actions', authenticateAdmin, (req, res) => {
-  const actions = db.prepare('SELECT DISTINCT action FROM audit_logs ORDER BY action').all();
-  res.json(success(actions.map((a: any) => a.action)));
+router.get('/audit/actions', authenticateAdmin, async (req, res) => {
+  const rows = await db
+    .selectDistinct({ action: auditLogs.action })
+    .from(auditLogs)
+    .orderBy(auditLogs.action);
+
+  res.json(success(rows.map((a) => a.action)));
 });
 
 // GET /api/admin/stats
-router.get('/stats', authenticateAdmin, (req, res) => {
-  const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get() as any;
-  const tenantCount = db.prepare('SELECT COUNT(*) as count FROM tenants').get() as any;
-  const clientCount = db.prepare('SELECT COUNT(*) as count FROM clients').get() as any;
-  const activeTokens = db.prepare('SELECT COUNT(*) as count FROM access_tokens WHERE revoked = 0 AND expires_at > ?').get(new Date().toISOString()) as any;
-  const activeSessions = db.prepare('SELECT COUNT(*) as count FROM sessions').get() as any;
+router.get('/stats', authenticateAdmin, async (req, res) => {
+  const [{ count: userCount }] = await db.select({ count: count() }).from(users);
+  const [{ count: tenantCount }] = await db.select({ count: count() }).from(tenants);
+  const [{ count: clientCount }] = await db.select({ count: count() }).from(clients);
 
-  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const recentLogins = db.prepare('SELECT COUNT(*) as count FROM audit_logs WHERE action = ? AND created_at > ?').get('LOGIN_SUCCESS', yesterday) as any;
-  const recentRegistrations = db.prepare('SELECT COUNT(*) as count FROM audit_logs WHERE action = ? AND created_at > ?').get('REGISTER', yesterday) as any;
+  const [{ count: activeTokens }] = await db
+    .select({ count: count() })
+    .from(accessTokens)
+    .where(and(eq(accessTokens.revoked, false), gt(accessTokens.expiresAt, new Date())));
+
+  const [{ count: activeSessions }] = await db.select({ count: count() }).from(sessions);
+
+  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+  const [{ count: recentLogins }] = await db
+    .select({ count: count() })
+    .from(auditLogs)
+    .where(and(eq(auditLogs.action, 'LOGIN_SUCCESS'), gt(auditLogs.createdAt, yesterday)));
+
+  const [{ count: recentRegistrations }] = await db
+    .select({ count: count() })
+    .from(auditLogs)
+    .where(and(eq(auditLogs.action, 'REGISTER'), gt(auditLogs.createdAt, yesterday)));
 
   res.json(success({
-    users: userCount.count,
-    tenants: tenantCount.count,
-    clients: clientCount.count,
-    activeTokens: activeTokens.count,
-    activeSessions: activeSessions.count,
-    last24h: { logins: recentLogins.count, registrations: recentRegistrations.count },
+    users: Number(userCount),
+    tenants: Number(tenantCount),
+    clients: Number(clientCount),
+    activeTokens: Number(activeTokens),
+    activeSessions: Number(activeSessions),
+    last24h: { logins: Number(recentLogins), registrations: Number(recentRegistrations) },
   }));
 });
 
 // GET /api/admin/tenants
-router.get('/tenants', authenticateAdmin, (req, res) => {
-  res.json(success(db.prepare('SELECT * FROM tenants ORDER BY created_at DESC').all()));
+router.get('/tenants', authenticateAdmin, async (req, res) => {
+  const tenantList = await db.select().from(tenants).orderBy(desc(tenants.createdAt));
+  res.json(success(tenantList));
 });
 
 // POST /api/admin/tenants
-router.post('/tenants', authenticateAdmin, validate({ body: createTenantSchema }), (req, res) => {
+router.post('/tenants', authenticateAdmin, validate({ body: createTenantSchema }), async (req, res) => {
   const { name, domain, settings } = req.body;
 
   const id = crypto.randomUUID();
-  db.prepare('INSERT INTO tenants (id, name, domain, settings) VALUES (?, ?, ?, ?)').run(
-    id, name, domain || null, JSON.stringify(settings || {})
-  );
+  await db.insert(tenants).values({
+    id,
+    name,
+    domain: domain || null,
+    settings: JSON.stringify(settings || {}),
+  });
 
-  logAudit((req as any).user.id, 'TENANT_CREATE', req, `Created tenant: ${name}`);
+  await logAudit(req.user!.id, 'TENANT_CREATE', req, `Created tenant: ${name}`);
   res.json(success({ id }, 'Tenant created successfully'));
 });
 
 // PUT /api/admin/tenants/:tenantId
-router.put('/tenants/:tenantId', authenticateAdmin, validate({ params: tenantIdParamsSchema, body: updateTenantSchema }), (req, res) => {
+router.put('/tenants/:tenantId', authenticateAdmin, validate({ params: tenantIdParamsSchema, body: updateTenantSchema }), async (req, res) => {
   const { tenantId } = req.params;
   const { name, domain, is_active, settings } = req.body;
 
-  db.prepare('UPDATE tenants SET name = ?, domain = ?, is_active = ?, settings = ? WHERE id = ?').run(
-    name, domain, is_active ? 1 : 0, JSON.stringify(settings || {}), tenantId
-  );
+  await db.update(tenants).set({
+    name,
+    domain,
+    isActive: is_active,
+    settings: JSON.stringify(settings || {}),
+  }).where(eq(tenants.id, tenantId));
 
-  logAudit((req as any).user.id, 'TENANT_UPDATE', req, `Updated tenant: ${tenantId}`);
+  await logAudit(req.user!.id, 'TENANT_UPDATE', req, `Updated tenant: ${tenantId}`);
   res.json(message('Tenant updated successfully'));
 });
 
 // DELETE /api/admin/tenants/:tenantId
-router.delete('/tenants/:tenantId', authenticateAdmin, validate({ params: tenantIdParamsSchema }), (req, res) => {
+router.delete('/tenants/:tenantId', authenticateAdmin, validate({ params: tenantIdParamsSchema }), async (req, res) => {
   const { tenantId } = req.params;
   if (tenantId === 'default') return res.status(400).json(error('Cannot delete default tenant', ErrorCode.VALIDATION_ERROR));
 
-  db.prepare('UPDATE users SET tenant_id = ? WHERE tenant_id = ?').run('default', tenantId);
-  db.prepare('DELETE FROM tenants WHERE id = ?').run(tenantId);
+  await db.update(users).set({ tenantId: 'default', updatedAt: new Date() }).where(eq(users.tenantId, tenantId));
+  await db.delete(tenants).where(eq(tenants.id, tenantId));
 
-  logAudit((req as any).user.id, 'TENANT_DELETE', req, `Deleted tenant: ${tenantId}`);
+  await logAudit(req.user!.id, 'TENANT_DELETE', req, `Deleted tenant: ${tenantId}`);
   res.json(message('Tenant deleted successfully'));
 });
 
 // GET /api/admin/sessions
-router.get('/sessions', authenticateAdmin, (req, res) => {
-  const sessions = db.prepare(`
+router.get('/sessions', authenticateAdmin, async (req, res) => {
+  const sessionList = await db.execute(sql`
     SELECT s.id, s.device_info, s.ip_address, s.last_active, s.created_at,
-           u.username, u.email,
-           (SELECT COUNT(*) FROM refresh_tokens rt WHERE rt.user_id = s.user_id AND rt.revoked = 0) as active_tokens
+      u.username, u.email,
+      (SELECT COUNT(*)::int FROM refresh_tokens rt WHERE rt.user_id = s.user_id AND rt.revoked = false) as active_tokens
     FROM sessions s
     LEFT JOIN users u ON s.user_id = u.id
     ORDER BY s.last_active DESC
-  `).all();
-  res.json(success(sessions));
+  `);
+  res.json(success(sessionList));
 });
 
 // DELETE /api/admin/sessions/:id
-router.delete('/sessions/:id', authenticateAdmin, (req, res) => {
+router.delete('/sessions/:id', authenticateAdmin, async (req, res) => {
   const { id } = req.params;
 
-  const session: any = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id);
+  const [session] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1);
   if (!session) return res.status(404).json(error('Session not found', ErrorCode.RESOURCE_NOT_FOUND));
 
-  db.prepare('UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ?').run(session.user_id);
-  db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
+  await db.update(refreshTokens).set({ revoked: true }).where(eq(refreshTokens.userId, session.userId));
+  await db.delete(sessions).where(eq(sessions.id, id));
 
-  logAudit((req as any).user.id, 'ADMIN_SESSION_REVOKED', req, `Session ${id} revoked by admin`);
+  await logAudit(req.user!.id, 'ADMIN_SESSION_REVOKED', req, `Session ${id} revoked by admin`);
   res.json(message('Session revoked successfully'));
 });
 
 // POST /api/admin/maintenance/cleanup-tokens
-router.post('/maintenance/cleanup-tokens', authenticateAdmin, (req, res) => {
-  const result = cleanupExpiredTokens();
+router.post('/maintenance/cleanup-tokens', authenticateAdmin, async (req, res) => {
+  const result = await cleanupExpiredTokens();
   res.json(success(result, 'Token cleanup completed'));
 });
 
 // GET /api/admin/tenants/:tenantId/password-policy
-router.get('/tenants/:tenantId/password-policy', authenticateAdmin, validate({ params: tenantIdParamsSchema }), (req, res) => {
+router.get('/tenants/:tenantId/password-policy', authenticateAdmin, validate({ params: tenantIdParamsSchema }), async (req, res) => {
   const { tenantId } = req.params;
-  const policy = getTenantPasswordPolicy(tenantId);
+  const policy = await getTenantPasswordPolicy(tenantId);
 
-  // Fetch updated_at from DB if a custom policy exists
-  const row = db.prepare('SELECT tenant_id, updated_at FROM tenant_password_policies WHERE tenant_id = ?').get(tenantId) as
-    | { tenant_id: string; updated_at: string | null }
-    | undefined;
+  const [row] = await db
+    .select({ tenantId: tenantPasswordPolicies.tenantId, updatedAt: tenantPasswordPolicies.updatedAt })
+    .from(tenantPasswordPolicies)
+    .where(eq(tenantPasswordPolicies.tenantId, tenantId))
+    .limit(1);
 
   res.json(success({
     tenant_id: tenantId,
     ...policy,
-    updated_at: row?.updated_at ?? null,
+    updated_at: row?.updatedAt ?? null,
   }));
 });
 
 // PUT /api/admin/tenants/:tenantId/password-policy
-router.put('/tenants/:tenantId/password-policy', authenticateAdmin, validate({ params: tenantIdParamsSchema, body: passwordPolicySchema }), (req, res) => {
+router.put('/tenants/:tenantId/password-policy', authenticateAdmin, validate({ params: tenantIdParamsSchema, body: passwordPolicySchema }), async (req, res) => {
   const { tenantId } = req.params;
   const { min_length, history_count, rotation_enabled, rotation_period_days } = req.body;
 
-  db.prepare(`
-    INSERT INTO tenant_password_policies (id, tenant_id, min_length, history_count, rotation_enabled, rotation_period_days, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(tenant_id) DO UPDATE SET
-      min_length = excluded.min_length,
-      history_count = excluded.history_count,
-      rotation_enabled = excluded.rotation_enabled,
-      rotation_period_days = excluded.rotation_period_days,
-      updated_at = CURRENT_TIMESTAMP
-  `).run(
-    crypto.randomUUID(),
+  await db.insert(tenantPasswordPolicies).values({
+    id: crypto.randomUUID(),
     tenantId,
-    min_length,
-    history_count,
-    rotation_enabled ? 1 : 0,
-    rotation_period_days,
-  );
+    minLength: min_length,
+    historyCount: history_count,
+    rotationEnabled: rotation_enabled,
+    rotationPeriodDays: rotation_period_days,
+  }).onConflictDoUpdate({
+    target: tenantPasswordPolicies.tenantId,
+    set: {
+      minLength: min_length,
+      historyCount: history_count,
+      rotationEnabled: rotation_enabled,
+      rotationPeriodDays: rotation_period_days,
+      updatedAt: new Date(),
+    },
+  });
 
   res.json(message('Password policy updated successfully'));
 });
 
 // GET /api/admin/tenants/:tenantId/ip-whitelist
-router.get('/tenants/:tenantId/ip-whitelist', authenticateAdmin, validate({ params: tenantIdParamsSchema }), (req, res) => {
+router.get('/tenants/:tenantId/ip-whitelist', authenticateAdmin, validate({ params: tenantIdParamsSchema }), async (req, res) => {
   const { tenantId } = req.params;
-  const entries = db.prepare(
-    'SELECT id, cidr, description, created_by, created_at FROM tenant_ip_whitelist WHERE tenant_id = ? ORDER BY created_at ASC'
-  ).all(tenantId);
+
+  const entries = await db
+    .select({
+      id: tenantIpWhitelist.id,
+      cidr: tenantIpWhitelist.cidr,
+      description: tenantIpWhitelist.description,
+      createdBy: tenantIpWhitelist.createdBy,
+      createdAt: tenantIpWhitelist.createdAt,
+    })
+    .from(tenantIpWhitelist)
+    .where(eq(tenantIpWhitelist.tenantId, tenantId))
+    .orderBy(asc(tenantIpWhitelist.createdAt));
+
   res.json(success(entries));
 });
 
 // POST /api/admin/tenants/:tenantId/ip-whitelist
-router.post('/tenants/:tenantId/ip-whitelist', authenticateAdmin, validate({ params: tenantIdParamsSchema, body: ipWhitelistEntrySchema }), (req, res) => {
+router.post('/tenants/:tenantId/ip-whitelist', authenticateAdmin, validate({ params: tenantIdParamsSchema, body: ipWhitelistEntrySchema }), async (req, res) => {
   const { tenantId } = req.params;
   const { cidr, description } = req.body;
 
@@ -495,39 +618,47 @@ router.post('/tenants/:tenantId/ip-whitelist', authenticateAdmin, validate({ par
   }
 
   const id = crypto.randomUUID();
-  const createdBy = (req as any).user?.id || null;
+  const createdBy = req.user?.id || null;
 
   try {
-    db.prepare(
-      'INSERT INTO tenant_ip_whitelist (id, tenant_id, cidr, description, created_by) VALUES (?, ?, ?, ?, ?)'
-    ).run(id, tenantId, cidr, description || null, createdBy);
+    await db.insert(tenantIpWhitelist).values({
+      id,
+      tenantId,
+      cidr,
+      description: description || null,
+      createdBy,
+    });
   } catch (err: any) {
-    if (err.message && err.message.includes('UNIQUE constraint failed')) {
+    if (err.message?.includes('duplicate key') || err.message?.includes('UNIQUE constraint failed')) {
       return res.status(409).json(error('CIDR already exists for this tenant', ErrorCode.CIDR_ALREADY_EXISTS));
     }
     return res.status(500).json(error('Internal server error', ErrorCode.SERVER_ERROR));
   }
 
-  logAudit(createdBy, 'IP_WHITELIST_ADDED', req, JSON.stringify({ tenant_id: tenantId, cidr, description }), tenantId);
+  await logAudit(createdBy, 'IP_WHITELIST_ADDED', req, JSON.stringify({ tenant_id: tenantId, cidr, description }), tenantId);
   res.status(201).json(success({ id }, 'IP whitelist entry added'));
 });
 
 // DELETE /api/admin/tenants/:tenantId/ip-whitelist/:entryId
-router.delete('/tenants/:tenantId/ip-whitelist/:entryId', authenticateAdmin, (req, res) => {
+router.delete('/tenants/:tenantId/ip-whitelist/:entryId', authenticateAdmin, async (req, res) => {
   const { tenantId, entryId } = req.params;
 
-  const entry = db.prepare(
-    'SELECT id FROM tenant_ip_whitelist WHERE id = ? AND tenant_id = ?'
-  ).get(entryId, tenantId);
+  const [entry] = await db
+    .select({ id: tenantIpWhitelist.id })
+    .from(tenantIpWhitelist)
+    .where(and(eq(tenantIpWhitelist.id, entryId), eq(tenantIpWhitelist.tenantId, tenantId)))
+    .limit(1);
 
   if (!entry) {
     return res.status(404).json(error('IP whitelist entry not found', ErrorCode.RESOURCE_NOT_FOUND));
   }
 
-  db.prepare('DELETE FROM tenant_ip_whitelist WHERE id = ? AND tenant_id = ?').run(entryId, tenantId);
+  await db
+    .delete(tenantIpWhitelist)
+    .where(and(eq(tenantIpWhitelist.id, entryId), eq(tenantIpWhitelist.tenantId, tenantId)));
 
-  const userId = (req as any).user?.id || null;
-  logAudit(userId, 'IP_WHITELIST_REMOVED', req, JSON.stringify({ tenant_id: tenantId, entry_id: entryId }), tenantId);
+  const userId = req.user?.id || null;
+  await logAudit(userId, 'IP_WHITELIST_REMOVED', req, JSON.stringify({ tenant_id: tenantId, entry_id: entryId }), tenantId);
   res.json(message('IP whitelist entry removed'));
 });
 
