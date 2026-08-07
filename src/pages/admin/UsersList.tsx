@@ -10,10 +10,10 @@ interface User {
   id: string;
   username: string;
   email: string;
-  is_active: number;
-  is_admin: number;
-  otp_enabled: number;
-  created_at: string;
+  isActive: number;
+  isAdmin: number;
+  otpEnabled: number;
+  createdAt: string;
 }
 
 export default function UsersList() {
@@ -57,7 +57,7 @@ export default function UsersList() {
 
   const openEdit = (user: User) => {
     setEditingUser(user);
-    setEditForm({ email: user.email, is_admin: !!user.is_admin });
+    setEditForm({ email: user.email, is_admin: !!user.isAdmin });
     setEditError('');
   };
 
@@ -145,19 +145,19 @@ export default function UsersList() {
               <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-zinc-900 dark:text-white">{user.username}</td>
               <td className="px-6 py-4 whitespace-nowrap text-sm text-zinc-500 dark:text-zinc-400">{user.email}</td>
               <td className="px-6 py-4 whitespace-nowrap text-sm">
-                <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${user.is_active ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'}`}>
-                  {user.is_active ? 'Active' : 'Inactive'}
+                <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${user.isActive ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'}`}>
+                  {user.isActive ? 'Active' : 'Inactive'}
                 </span>
               </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-zinc-500 dark:text-zinc-400">{user.is_admin ? 'Admin' : 'User'}</td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-zinc-500 dark:text-zinc-400">{user.otp_enabled ? 'Enabled' : 'Disabled'}</td>
+              <td className="px-6 py-4 whitespace-nowrap text-sm text-zinc-500 dark:text-zinc-400">{user.isAdmin ? 'Admin' : 'User'}</td>
+              <td className="px-6 py-4 whitespace-nowrap text-sm text-zinc-500 dark:text-zinc-400">{user.otpEnabled ? 'Enabled' : 'Disabled'}</td>
               <td className="px-6 py-4 whitespace-nowrap text-sm text-zinc-500 dark:text-zinc-400">
-                {format(new Date(user.created_at), 'MMM d, yyyy HH:mm')}
+                {user.createdAt ? format(new Date(user.createdAt), 'MMM d, yyyy HH:mm') : '-'}
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                 <div className="flex justify-end gap-2">
                   <button onClick={() => openEdit(user)} title="Edit user" className="text-indigo-600 hover:text-indigo-900"><Edit className="h-4 w-4" /></button>
-                  {user.is_active ? (
+                  {user.isActive ? (
                     <button onClick={() => handleBan(user)} title="Ban user" className="text-red-600 hover:text-red-900"><Ban className="h-4 w-4" /></button>
                   ) : (
                     <button onClick={() => handleUnban(user)} title="Unban user" className="text-green-600 hover:text-green-900"><CheckCircle className="h-4 w-4" /></button>

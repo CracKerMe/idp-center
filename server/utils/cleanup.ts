@@ -51,7 +51,7 @@ async function purgeExpiredAuditLogs(): Promise<number> {
 
     const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
     const result = await db.delete(auditLogs).where(and(eq(auditLogs.tenantId, tenant.id), lt(auditLogs.createdAt, cutoff)));
-    const count = Number((result as any).rowCount) || 0;
+    const count = Number((result as any).count) || 0;
     if (count > 0) {
       logger.info(`Purged ${count} expired audit log rows for tenant ${tenant.id} (retention: ${retentionDays}d)`);
     }
@@ -78,17 +78,17 @@ export async function cleanupExpiredTokens(): Promise<CleanupResult> {
   const dpopResult = await db.delete(dpopJtis).where(lt(dpopJtis.expiresAt, now));
 
   const removedCounts = {
-    accessTokens: Number((atResult as any).rowCount),
-    refreshTokens: Number((rtResult as any).rowCount),
-    authCodes: Number((acResult as any).rowCount),
-    oauthStates: Number((osResult as any).rowCount),
-    passwordResets: Number((prResult as any).rowCount),
-    trustedDevices: Number((tdResult as any).rowCount),
-    signingKeys: Number((skResult as any).rowCount),
-    deviceCodes: Number((dcResult as any).rowCount),
-    clientAssertionJtis: Number((cajResult as any).rowCount),
-    pushedAuthRequests: Number((parResult as any).rowCount),
-    dpopJtis: Number((dpopResult as any).rowCount),
+    accessTokens: Number((atResult as any).count),
+    refreshTokens: Number((rtResult as any).count),
+    authCodes: Number((acResult as any).count),
+    oauthStates: Number((osResult as any).count),
+    passwordResets: Number((prResult as any).count),
+    trustedDevices: Number((tdResult as any).count),
+    signingKeys: Number((skResult as any).count),
+    deviceCodes: Number((dcResult as any).count),
+    clientAssertionJtis: Number((cajResult as any).count),
+    pushedAuthRequests: Number((parResult as any).count),
+    dpopJtis: Number((dpopResult as any).count),
   };
 
   // Record removed items

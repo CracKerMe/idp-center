@@ -1,8 +1,31 @@
 # IDP Center 企业级OAuth平台增强分析
 
-## 📊 当前状态评估
+> **状态：archived（历史差距分析，四个阶段已全部实施）**
+> 本文档是驱动 [ENTERPRISE-OAUTH-IMPLEMENTATION-PLAN.md](ENTERPRISE-OAUTH-IMPLEMENTATION-PLAN.md) 四阶段方案的原始差距分析，写作时点的评分、"当前缺失"列表均反映的是**实施前**的状态。截至下方"实施状态更新"，四个阶段的核心工作已全部完成并合入主分支。继续阅读本文档时请把标题里的"当前"理解为"实施前"，不要把评分/缺失列表当成现状描述；最新现状以 `server/` 代码与 [README.md](README.md) 为准。
 
-| 维度 | 评分 | 说明 |
+## ✅ 实施状态更新
+
+| 阶段 | 原评分维度 | 实施前评分 | 当前状态 | 关键落地 |
+|------|------------|------------|----------|----------|
+| 阶段〇 | — | — | ✅ 完成 | pg-support 合并、`.well-known` 拆分、OIDC 特征测试 |
+| 阶段一 | 核心OAuth | 6/10 | ✅ 完成 | RS256+JWKS+密钥轮换、grant 注册表、client_credentials/device_code/token_exchange、introspect/revoke、会话与登出（front/back-channel）、动态注册/PAR/DPoP |
+| 阶段二 | 企业就绪 | 4/10 | ✅ 完成 | MFA（TOTP/Email/SMS/WebAuthn/恢复码）、SAML SP + OIDC RP + LDAP 联合身份、RBAC+SCIM、审计哈希链+导出+合规报表、Prometheus 可观测性 |
+| 阶段三 | AI Native | 2/10 | ✅ 完成 | 风险引擎（规则打分 + `risk_policies`，`RISK_ENGINE_MODE=off\|shadow\|enforce`）、UEBA 基线与会话风险重估、LLM 辅助（审计摘要/策略草案/合规检查，人工确认才生效） |
+| 阶段四 | — | — | ✅ 完成 | 迁移文件化（`pnpm db:migrate`）、Redis 缓存/限流（可选降级）、PG advisory lock 任务选主、Helm chart |
+
+**未采纳/明确不做的项**（方案中已说明原因，非遗漏）：
+- 社交登录扩展（Google/微信/钉钉等）——本方案范围内明确排除，GitHub 登录已抽象为通用 IdP 框架，接入只需加配置
+- 智能测试生成（3.4）——落成 CI 侧脚本而非产品功能，优先级低于风险引擎
+- 按租户 issuer（2.6）——按需触发项，无明确合规诉求暂不做
+- CockroachDB / 多区域部署、微服务化（4.5）——评估后判定当前规模不划算，采用"模块化单体 + `server/oauth`、`server/services` 边界"替代
+
+以下正文保留原始分析内容，作为历史背景与后续同类评估的参考基线。
+
+---
+
+## 📊 实施前状态评估（历史快照，非当前现状）
+
+| 维度 | 评分（实施前） | 说明 |
 |------|------|------|
 | **核心OAuth** | 6/10 | 基础功能完整，缺少企业级特性 |
 | **安全性** | 7/10 | 基础安全到位，缺少高级特性 |
@@ -233,29 +256,31 @@ audit_service: {
 
 ---
 
-## 🏆 竞争力分析
+## 🏆 竞争力分析（实施前 vs. 实施后）
 
-| 特性 | 当前 | Auth0 | Keycloak | Okta |
-|------|------|-------|----------|------|
-| OAuth 2.0/OIDC | ✅ | ✅ | ✅ | ✅ |
-| MFA | 部分 | ✅ | ✅ | ✅ |
-| 联合身份 | ❌ | ✅ | ✅ | ✅ |
-| 企业SSO | ❌ | ✅ | ✅ | ✅ |
-| AI Native | ❌ | 部分 | ❌ | 部分 |
-| 多租户 | ✅ | ✅ | ✅ | ✅ |
-| 审计日志 | ✅ | ✅ | ✅ | ✅ |
+| 特性 | 实施前 | 实施后（当前） | Auth0 | Keycloak | Okta |
+|------|:------:|:---------------:|:-----:|:--------:|:----:|
+| OAuth 2.0/OIDC | ✅ | ✅ | ✅ | ✅ | ✅ |
+| MFA | 部分 | ✅（TOTP/Email/SMS/WebAuthn/恢复码） | ✅ | ✅ | ✅ |
+| 联合身份 | ❌ | ✅（SAML SP/OIDC RP/LDAP） | ✅ | ✅ | ✅ |
+| 企业SSO | ❌ | ✅（RBAC+SCIM+前后端登出联动） | ✅ | ✅ | ✅ |
+| AI Native | ❌ | ✅（风险引擎/UEBA/LLM 辅助，人工确认） | 部分 | ❌ | 部分 |
+| 多租户 | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 审计日志 | ✅ | ✅（哈希链防篡改 + 合规报表） | ✅ | ✅ | ✅ |
 
-**结论**：IDP Center在基础OAuth功能上已经具备，但在企业级特性和AI Native方面有较大差距。建议按照路线图分阶段实施，优先补齐核心OAuth功能，然后逐步引入企业级特性和AI Native能力。
+**结论（更新）**：原分析指出的核心 OAuth、企业级特性、AI Native 三方面差距已通过四阶段方案逐一补齐，当前与主流 IdP 在功能广度上已基本对齐；剩余差距集中在生态成熟度（社区/插件市场）而非功能缺口，非本方案范围。
 
 ---
 
-## 📝 技术债务
+## 📝 技术债务（实施前 vs. 当前）
 
-1. **数据库**：SQLite不适合生产环境，需要升级到PostgreSQL
-2. **架构**：单体架构需要微服务化
-3. **安全**：缺少高级安全特性（DPoP、mTLS等）
-4. **测试**：需要增强集成测试和安全测试
-5. **文档**：API文档需要完善
+| 项 | 实施前 | 当前状态 |
+|----|--------|----------|
+| 数据库 | SQLite 不适合生产环境 | ✅ 已迁移 PostgreSQL + Drizzle ORM，迁移文件化（`pnpm db:migrate`） |
+| 架构 | 单体架构需要微服务化 | 评估后采用模块化单体（`server/oauth`/`server/services` 边界），微服务化判定不划算，暂不做 |
+| 安全 | 缺少高级安全特性（DPoP、mTLS 等） | ✅ DPoP（RFC 9449）已实现；mTLS 客户端认证未纳入本方案范围 |
+| 测试 | 需要增强集成测试和安全测试 | ✅ `tests/integration/` 覆盖 OIDC/RBAC/租户隔离，`fast-check` 属性测试覆盖风险引擎等模块 |
+| 文档 | API 文档需要完善 | 本轮已同步更新 README/Agents.md/PRODUCT_ROADMAP；`docs/api/` 仍只覆盖部分专题，建议后续按 `docs/documentation-archive-guideline.md` 补齐 |
 
 ---
 

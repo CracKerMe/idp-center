@@ -10,11 +10,12 @@ vi.mock('../server/database.js', () => ({ db: mockDb }));
 
 const { cleanupExpiredTokens } = await import('../server/utils/cleanup.js');
 
-function createMockResult(rowCount: number) {
+// postgres-js exposes `.count` on mutation results, NOT the node-postgres `.rowCount`.
+function createMockResult(count: number) {
   const chain: any = {};
   chain.where = vi.fn().mockReturnValue(chain);
   chain.returning = vi.fn().mockReturnValue(chain);
-  chain.then = (resolve: any) => resolve({ rowCount });
+  chain.then = (resolve: any) => resolve({ count });
   chain[Symbol.toStringTag] = 'Promise';
   return chain;
 }

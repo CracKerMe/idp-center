@@ -8,10 +8,10 @@ import AdminDialog from '../../components/admin/AdminDialog';
 
 interface Client {
   id: string;
-  client_id: string;
-  client_name: string;
-  redirect_uris: string;
-  created_at: string;
+  clientId: string;
+  clientName: string;
+  redirectUris: string;
+  createdAt: string;
 }
 
 export default function ClientsList() {
@@ -55,7 +55,7 @@ export default function ClientsList() {
 
   const openEdit = (client: Client) => {
     setEditingClient(client);
-    setEditForm({ client_name: client.client_name, redirect_uris: client.redirect_uris });
+    setEditForm({ client_name: client.clientName, redirect_uris: client.redirectUris });
     setEditError('');
   };
 
@@ -63,7 +63,7 @@ export default function ClientsList() {
     e.preventDefault();
     if (!editingClient) return;
     setEditError('');
-    const res = await authFetch(`/api/admin/clients/${editingClient.client_id}`, {
+    const res = await authFetch(`/api/admin/clients/${editingClient.clientId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(editForm),
@@ -74,19 +74,19 @@ export default function ClientsList() {
   };
 
   const handleDelete = async (client: Client) => {
-    if (!confirm(`Delete client "${client.client_name}"? This cannot be undone.`)) return;
-    const res = await authFetch(`/api/admin/clients/${client.client_id}`, { method: 'DELETE' });
+    if (!confirm(`Delete client "${client.clientName}"? This cannot be undone.`)) return;
+    const res = await authFetch(`/api/admin/clients/${client.clientId}`, { method: 'DELETE' });
     const result = await parseApiResponse(res);
     if (isSuccess(result)) fetchClients();
     else alert(getErrorMessage(result));
   };
 
   const handleRotateSecret = async (client: Client) => {
-    if (!confirm(`Rotate secret for "${client.client_name}"? The old secret will stop working immediately.`)) return;
-    const res = await authFetch(`/api/admin/clients/${client.client_id}/rotate-secret`, { method: 'POST' });
+    if (!confirm(`Rotate secret for "${client.clientName}"? The old secret will stop working immediately.`)) return;
+    const res = await authFetch(`/api/admin/clients/${client.clientId}/rotate-secret`, { method: 'POST' });
     const result = await parseApiResponse<{ client_secret: string }>(res);
     if (isSuccess(result) && result.data) {
-      setRotatedSecret({ clientId: client.client_id, secret: result.data.client_secret });
+      setRotatedSecret({ clientId: client.clientId, secret: result.data.client_secret });
       setShowSecret(false);
     } else {
       alert(getErrorMessage(result));
@@ -147,11 +147,11 @@ export default function ClientsList() {
             <tr><td colSpan={5} className="py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">No clients found</td></tr>
           ) : clients.map(client => (
             <tr key={client.id}>
-              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-zinc-900 dark:text-white">{client.client_name}</td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm text-zinc-500 dark:text-zinc-400 font-mono">{client.client_id}</td>
-              <td className="px-6 py-4 text-sm text-zinc-500 dark:text-zinc-400 break-all max-w-xs">{client.redirect_uris}</td>
+              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-zinc-900 dark:text-white">{client.clientName}</td>
+              <td className="px-6 py-4 whitespace-nowrap text-sm text-zinc-500 dark:text-zinc-400 font-mono">{client.clientId}</td>
+              <td className="px-6 py-4 text-sm text-zinc-500 dark:text-zinc-400 break-all max-w-xs">{client.redirectUris}</td>
               <td className="px-6 py-4 whitespace-nowrap text-sm text-zinc-500 dark:text-zinc-400">
-                {format(new Date(client.created_at), 'MMM d, yyyy HH:mm')}
+                {client.createdAt ? format(new Date(client.createdAt), 'MMM d, yyyy HH:mm') : '-'}
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                 <div className="flex justify-end gap-2">

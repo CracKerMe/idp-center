@@ -9,9 +9,9 @@ interface Tenant {
   id: string;
   name: string;
   domain: string | null;
-  is_active: number;
+  isActive: number;
   settings: string;
-  created_at: string;
+  createdAt: string;
 }
 
 export default function TenantsList() {
@@ -63,7 +63,7 @@ export default function TenantsList() {
         body: JSON.stringify({
           name: formData.name,
           domain: formData.domain,
-          is_active: editingTenant ? editingTenant.is_active : true,
+          is_active: editingTenant ? editingTenant.isActive : true,
           settings: JSON.parse(formData.settings || '{}'),
         }),
       });
@@ -154,7 +154,7 @@ export default function TenantsList() {
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-sm text-zinc-500 dark:text-zinc-400">{tenant.domain || '-'}</td>
               <td className="px-6 py-4 whitespace-nowrap text-sm">
-                {tenant.is_active ? (
+                {tenant.isActive ? (
                   <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
                     <CheckCircle className="h-3 w-3 mr-1" /> Active
                   </span>
@@ -165,7 +165,7 @@ export default function TenantsList() {
                 )}
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-sm text-zinc-500 dark:text-zinc-400">
-                {new Date(tenant.created_at).toLocaleDateString()}
+                {tenant.createdAt ? new Date(tenant.createdAt).toLocaleDateString() : '-'}
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                 <div className="flex justify-end gap-2">
@@ -217,8 +217,8 @@ export default function TenantsList() {
           </div>
           {editingTenant && (
             <div className="flex items-center">
-              <input type="checkbox" id="is_active" checked={editingTenant.is_active === 1}
-                onChange={e => setEditingTenant({ ...editingTenant, is_active: e.target.checked ? 1 : 0 })}
+              <input type="checkbox" id="is_active" checked={editingTenant.isActive === 1}
+                onChange={e => setEditingTenant({ ...editingTenant, isActive: e.target.checked ? 1 : 0 })}
                 className="h-4 w-4 text-indigo-600 border-zinc-300 rounded focus:ring-indigo-500" />
               <label htmlFor="is_active" className="ml-2 text-sm text-zinc-900 dark:text-white">Active</label>
             </div>

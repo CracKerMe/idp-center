@@ -1,6 +1,24 @@
 #!/bin/bash
 
 # 测试脚本：验证登录和 Token 功能
+#
+# admin 密码是首次启动时随机生成的（见 server/database.ts 的 seedDefaults），
+# 只在服务启动日志中打印一次，因此这里必须通过参数/环境变量传入，不能写死。
+# 首次登录会因 mustChangePassword=true 被拒绝（403 PASSWORD_EXPIRED），
+# 必须先调用 /api/auth/password/change-expired 改密后才能正常登录拿 token。
+#
+# 用法：
+#   ./test-login.sh <admin密码> [新密码]
+#   ADMIN_PASSWORD=xxxx ./test-login.sh
+
+ADMIN_PASSWORD="${1:-$ADMIN_PASSWORD}"
+NEW_PASSWORD="${2:-NewAdmin@2024Pass!}"
+
+if [ -z "$ADMIN_PASSWORD" ]; then
+  echo "❌ 缺少 admin 密码。用法：./test-login.sh <admin密码> [新密码]"
+  echo "   密码来源：首次运行 pnpm dev 时终端打印的 FIRST-RUN CREDENTIALS。"
+  exit 1
+fi
 
 echo "🧪 测试 IdP Center 登录和 Token 功能"
 echo "========================================"
@@ -10,10 +28,29 @@ echo ""
 echo "1️⃣ 测试登录 API..."
 LOGIN_RESPONSE=$(curl -s -X POST http://localhost:5986/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"Admin@IdpCenter2024!"}')
+  -d "{\"username\":\"admin\",\"password\":\"$ADMIN_PASSWORD\"}")
 
 echo "登录响应："
 echo "$LOGIN_RESPONSE" | python3 -m json.tool 2>/dev/null || echo "$LOGIN_RESPONSE"
+
+# 首次登录会要求改密，先走改密流程再重新登录
+if echo "$LOGIN_RESPONSE" | grep -q "must_change_password"; then
+  echo ""
+  echo "🔐 检测到需要首次改密，调用 /api/auth/password/change-expired ..."
+  CHANGE_RESPONSE=$(curl -s -X POST http://localhost:5986/api/auth/password/change-expired \
+    -H "Content-Type: application/json" \
+    -d "{\"username\":\"admin\",\"current_password\":\"$ADMIN_PASSWORD\",\"new_password\":\"$NEW_PASSWORD\"}")
+  echo "改密响应："
+  echo "$CHANGE_RESPONSE" | python3 -m json.tool 2>/dev/null || echo "$CHANGE_RESPONSE"
+
+  echo ""
+  echo "🔁 使用新密码重新登录..."
+  LOGIN_RESPONSE=$(curl -s -X POST http://localhost:5986/api/auth/login \
+    -H "Content-Type: application/json" \
+    -d "{\"username\":\"admin\",\"password\":\"$NEW_PASSWORD\"}")
+  echo "登录响应："
+  echo "$LOGIN_RESPONSE" | python3 -m json.tool 2>/dev/null || echo "$LOGIN_RESPONSE"
+fi
 
 # 提取 tokens
 ACCESS_TOKEN=$(echo "$LOGIN_RESPONSE" | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)

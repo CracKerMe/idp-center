@@ -36,6 +36,13 @@ vi.mock('../../server/services/email.service.js', () => ({
   },
 }));
 
+// Bypass rate limiting in integration tests — the limiter shares a single
+// in-process cache across the entire test suite, so beforeEach logins quickly
+// exhaust the 10/60s budget and every subsequent test gets HTTP 429.
+vi.mock('../../server/middleware/rate-limit.js', () => ({
+  rateLimit: () => (_req: any, _res: any, next: any) => next(),
+}));
+
 import { app } from '../../server.js';
 import request from 'supertest';
 

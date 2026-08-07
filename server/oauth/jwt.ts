@@ -1,4 +1,5 @@
 import * as jose from 'jose';
+import crypto from 'crypto';
 import { config } from '../config.js';
 import { getActiveSigner, getVerificationKey } from '../services/keys.service.js';
 
@@ -12,9 +13,16 @@ export interface SignOpts {
 async function sign(claims: Record<string, unknown>, opts: SignOpts, extraHeader?: Record<string, unknown>): Promise<string> {
   const signer = await getActiveSigner();
   const now = Math.floor(Date.now() / 1000);
+  // A unique jti guarantees every signed token is byte-distinct. Without it, two
+  // tokens minted for the same subject/scope within one second (iat/exp are
+  // second-resolution) would be identical and collide on access_tokens.token's
+  // UNIQUE constraint. A caller-supplied jti (e.g. back-channel logout tokens) is
+  // preserved; everything else gets a fresh one.
+  const jti = typeof claims.jti === 'string' ? claims.jti : crypto.randomUUID();
   let jwt = new jose.SignJWT(claims)
     .setProtectedHeader({ alg: signer.alg, kid: signer.kid, ...extraHeader })
     .setIssuedAt(now)
+    .setJti(jti)
     .setExpirationTime(now + opts.expiresInSec)
     .setIssuer(config.APP_URL);
 

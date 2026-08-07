@@ -20,7 +20,7 @@ function safeReturnTo(returnTo: string | undefined, fallback = '/dashboard') {
 
 onMounted(async () => {
   const code = route.query.code as string
-  const nonce = route.query.state as string
+  const state = route.query.state as string
   const errorParam = route.query.error as string
 
   if (errorParam) {
@@ -29,34 +29,16 @@ onMounted(async () => {
     return
   }
 
-  if (!nonce) {
+  if (!state) {
     error.value = 'Identity protocol failure: Missing state packet.'
     loading.value = false
     return
   }
 
-  const storageKey = `oauth_state:${nonce}`
-  const saved = sessionStorage.getItem(storageKey)
-  sessionStorage.removeItem(storageKey)
-
-  if (!saved) {
+  // Validates state + TTL and returns the PKCE verifier stashed by beginOAuthLogin().
+  const record = authStore.consumeOAuthState(state)
+  if (!record) {
     error.value = 'Session expired or invalid state synchronization.'
-    loading.value = false
-    return
-  }
-
-  let record: { nonce: string; return_to?: string; verifier?: string; iat: number } | null = null
-  try {
-    record = JSON.parse(saved)
-  } catch {
-    error.value = 'Checksum failure: Data corruption in state packet.'
-    loading.value = false
-    return
-  }
-
-  const ttlMs = 10 * 60 * 1000
-  if (!record || record.nonce !== nonce || Date.now() - record.iat > ttlMs) {
-    error.value = 'Token TTL expired or nonce mismatch.'
     loading.value = false
     return
   }
@@ -68,12 +50,7 @@ onMounted(async () => {
   }
 
   try {
-    const clientId = 'default-client'
-    const clientSecret = 'secret123'
-    const redirectUri = 'http://localhost:3000/callback'
-
-    await authStore.exchangeCodeForToken(code, clientId, clientSecret, redirectUri, record.verifier)
-
+    await authStore.exchangeCodeForToken(code, record.verifier)
     router.replace(safeReturnTo(record.return_to))
   } catch (err: any) {
     console.error('OAuth callback error:', err)

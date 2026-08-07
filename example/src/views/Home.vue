@@ -32,63 +32,10 @@ const features = [
   }
 ]
 
-function safeReturnTo(returnTo: string | undefined, fallback = '/dashboard') {
-  if (!returnTo) return fallback
-  if (!returnTo.startsWith('/')) return fallback
-  if (returnTo.startsWith('//')) return fallback
-  if (returnTo.includes('://')) return fallback
-  return returnTo
-}
-
-function generateNonce() {
-  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID()
-  return Array.from(crypto.getRandomValues(new Uint8Array(16)))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('')
-}
-
-async function generatePKCE() {
-  const array = new Uint8Array(32)
-  crypto.getRandomValues(array)
-  const verifier = btoa(String.fromCharCode.apply(null, Array.from(array)))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=/g, '')
-
-  const encoder = new TextEncoder()
-  const data = encoder.encode(verifier)
-  const hash = await crypto.subtle.digest('SHA-256', data)
-  const challenge = btoa(String.fromCharCode.apply(null, Array.from(new Uint8Array(hash))))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=/g, '')
-
-  return { verifier, challenge }
-}
-
+// OAuth state/PKCE bookkeeping lives in the auth store (beginOAuthLogin) — shared with
+// Login.vue's "Single Sign-On" button so there is exactly one implementation to get right.
 async function startOAuthFlow(returnTo?: string) {
-  const clientId = 'default-client'
-  const redirectUri = 'http://localhost:3000/callback'
-  const nonce = generateNonce()
-  const resolvedReturnTo = safeReturnTo(returnTo ?? router.currentRoute.value.fullPath)
-  const { verifier, challenge } = await generatePKCE()
-
-  sessionStorage.setItem(
-    `oauth_state:${nonce}`,
-    JSON.stringify({ nonce, return_to: resolvedReturnTo, verifier, iat: Date.now() })
-  )
-
-  const params = new URLSearchParams({
-    client_id: clientId,
-    redirect_uri: redirectUri,
-    response_type: 'code',
-    scope: 'openid profile email',
-    state: nonce,
-    code_challenge: challenge,
-    code_challenge_method: 'S256'
-  })
-
-  window.location.href = `http://localhost:5986/#/authorize?${params.toString()}`
+  await authStore.beginOAuthLogin(returnTo ?? router.currentRoute.value.fullPath)
 }
 
 function goToDashboard() {

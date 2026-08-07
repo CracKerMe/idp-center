@@ -2,47 +2,59 @@
 
 # 🔐 IDP Center
 
-**安全、标准、易用的独立身份认证中心**
+**企业级 OIDC / OAuth 2.1 身份认证中心**
 
-支持 OAuth 2.1 / OIDC · OTP 双因素认证 · 多租户隔离 · 管理后台
+多租户 · RS256 + JWKS · MFA(TOTP/Email/SMS/WebAuthn) · SAML/OIDC/LDAP 联合身份 · RBAC + SCIM · 风险引擎 · AI 辅助运维
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue.svg)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-19-61dafb.svg)](https://react.dev/)
 [![Express](https://img.shields.io/badge/Express-4-000000.svg)](https://expressjs.com/)
-[![SQLite](https://img.shields.io/badge/SQLite-003B57.svg)](https://www.sqlite.org/)
-[![Vitest](https://img.shields.io/badge/Tests-352%20passed-brightgreen.svg)](https://vitest.dev/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Drizzle_ORM-4169E1.svg)](https://orm.drizzle.team/)
+[![Vitest](https://img.shields.io/badge/Tests-fast--check-brightgreen.svg)](https://vitest.dev/)
 
 </div>
 
 ---
 
-## ✨ 核心功能
+## 📄 文档地图
 
-### 🔑 认证能力
-- **用户认证** — 注册、登录、登出、密码重置
-- **邮箱验证** — 注册后邮箱验证、验证邮件重发
-- **OTP 双因素认证** — 基于 TOTP 的 2FA（兼容 Google Authenticator）
-- **GitHub OAuth** — 第三方社交登录
-- **JWT 令牌** — Access Token + Refresh Token 机制
-- **密码策略** — 强密码校验、历史密码限制、密码过期轮换
+- **本文档**：项目简介、启动方式、最短部署路径
+- [ENTERPRISE-OAUTH-ANALYSIS-COMPLETE.md](ENTERPRISE-OAUTH-ANALYSIS-COMPLETE.md) — 企业级差距分析与当前实施状态
+- [ENTERPRISE-OAUTH-IMPLEMENTATION-PLAN.md](ENTERPRISE-OAUTH-IMPLEMENTATION-PLAN.md) — 四阶段可实施方案（表结构、函数签名、排期约束）
+- [docs/operations/deployment.md](docs/operations/deployment.md) — 数据库迁移/Redis/多副本选主/风险引擎与 LLM 辅助上线检查表
+- [Agents.md](Agents.md) — 面向 AI 协作者/新贡献者的仓库事实基线
+- [docs/documentation-archive-guideline.md](docs/documentation-archive-guideline.md) — 文档分层与归档规范
+- [docs/PRODUCT_ROADMAP.md](docs/PRODUCT_ROADMAP.md) — 早期 P0/P1 路线图（已并入上述四阶段方案）
+- [deploy/helm/idp-center/README.md](deploy/helm/idp-center/README.md) — Kubernetes/Helm 部署前置条件
 
-### 🏢 企业级特性
-- **多租户隔离** — 租户级数据隔离与配置
-- **IP 白名单** — 租户级网络访问控制（支持 IPv4/IPv6 CIDR）
-- **审计日志** — 全链路操作审计与导出
-- **会话管理** — 全局会话查看与强制下线
+---
 
-### 📡 协议支持
-- **OpenID Connect (OIDC)** — 标准 OIDC Provider
-- **OAuth 2.1** — 授权码流程 + PKCE
-- **JWKS** — JSON Web Key Set 端点
-- **动态发现** — `.well-known/openid-configuration`
+## ✨ 核心能力
 
-### 🛡️ 安全防护
-- **登录防暴破** — 失败次数锁定（可配置）
-- **密码加密** — bcrypt 哈希
-- **Helmet** — HTTP 安全头
-- **Token 黑名单** — JWT 吊销机制
+### 🔑 核心认证（阶段 0-1）
+- 注册 / 登录 / 登出 / 密码重置 / 邮箱验证，强密码策略 + 历史密码限制 + 定期轮换
+- **RS256 + JWKS + 密钥轮换**（`/.well-known/jwks.json`，90 天轮换，HS256 兼容窗口已下线）
+- 授权码 + PKCE、**client_credentials**、**device_code**（RFC 8628）、**token_exchange**（RFC 8693）
+- `/introspect`（RFC 7662）、`/revoke`（RFC 7009）、动态客户端注册（RFC 7591/7592）、PAR（RFC 9126）、DPoP（RFC 9449）
+- OIDC 会话串联、RP-initiated / front-channel / back-channel 登出
+
+### 🏢 企业级功能（阶段 2）
+- **MFA**：TOTP、Email OTP、SMS OTP（阿里云/腾讯云/Console）、WebAuthn/FIDO2、恢复码，`acr`/`amr` step-up
+- **联合身份**：SAML 2.0 SP、OIDC RP、LDAP/AD，GitHub 登录已纳入同一 IdP 框架，JIT 建号
+- **RBAC + SCIM 2.0**：角色/权限/用户组，`platform-admin` / `tenant-admin` 双层隔离，`/scim/v2` 对接 Okta/Azure AD
+- **审计与合规**：哈希链防篡改、CSV/JSONL 流式导出、SOC2/GDPR 差距报表、按租户保留策略
+- **可观测性**：Prometheus `/metrics`、`/livez`、`/readyz`、结构化日志（trace/span/tenant/request id）
+
+### 🤖 AI Native（阶段 3）
+- **风险引擎**（`RISK_ENGINE_MODE=off|shadow|enforce`）：新设备/新国家/不可能旅行/新 ASN/异常时段/近期失败规则打分，`risk_policies` 可配置分数区间 → 动作
+- **UEBA**：夜间基线重算 + 登录时增量更新，令牌刷新时重估会话风险，异常跳变自动撤销会话
+- **LLM 辅助**（需 `ANTHROPIC_API_KEY`）：审计摘要、自然语言风险策略草案（人工确认后生效）、合规差距检查 —— 全部只读建议，绝不直接触发鉴权动作，发送前对 PII 脱敏
+
+### ☁️ 云原生（阶段 4）
+- 迁移文件化：生产环境不再 `drizzle-kit push`，走 `pnpm db:migrate`
+- Redis 共享缓存 + 限流（`REDIS_URL` 未配置时退回单机内存实现）
+- 基于 PG advisory lock 的任务选主（清理 / 密钥轮换 / UEBA / 审计归档），多副本不重复执行
+- [Helm chart](deploy/helm/idp-center)：Deployment/HPA/PDB/Ingress + db-migrate initContainer
 
 ---
 
@@ -52,9 +64,15 @@
 |------|------|
 | **前端** | React 19 + Vite + TanStack Router + Tailwind CSS 4 |
 | **后端** | Express 4 + TypeScript 5.8 |
-| **数据库** | better-sqlite3（本地文件 `auth.db`） |
+| **数据库** | PostgreSQL + Drizzle ORM（迁移文件在 `drizzle/`） |
+| **缓存/限流** | Redis（`ioredis`，可选，未配置时退回内存实现） |
+| **加解密** | `jose`（RS256/JWKS）、AES-256-GCM（`server/services/crypto.ts`） |
+| **联合身份** | `@node-saml/node-saml`、`openid-client`、`ldapts` |
+| **MFA** | `otplib`（TOTP）、`@simplewebauthn/*`（WebAuthn） |
+| **AI** | `@anthropic-ai/sdk`（可选） |
+| **可观测性** | `prom-client` |
 | **测试** | Vitest + Supertest + fast-check（属性测试） |
-| **构建** | Vite（前端）+ tsc（后端） |
+| **部署** | Docker（distroless 两阶段构建）、Helm |
 
 ---
 
@@ -62,37 +80,25 @@
 
 ```
 idp-center/
-├── src/                    # 前端源码
-│   ├── pages/              # 页面组件
-│   │   ├── Login.tsx       # 登录页
-│   │   ├── Register.tsx    # 注册页
-│   │   ├── Profile.tsx     # 用户资料
-│   │   ├── Dashboard.tsx   # 仪表盘
-│   │   ├── Authorize.tsx   # OAuth 授权页
-│   │   ├── ForgotPassword.tsx
-│   │   ├── ResetPassword.tsx
-│   │   ├── VerifyEmail.tsx
-│   │   ├── SetupOTP.tsx    # OTP 设置
-│   │   └── admin/          # 管理后台页面
-│   ├── routes/             # TanStack Router 路由定义
-│   ├── utils/              # 工具函数（fetch 封装等）
-│   └── App.tsx             # 应用入口
-├── server/                 # 后端源码
-│   ├── routes/             # API 路由
-│   │   ├── auth.ts         # 认证相关
-│   │   ├── oidc.ts         # OIDC/OAuth
-│   │   ├── github.ts       # GitHub OAuth
-│   │   ├── user.ts         # 用户操作
-│   │   └── admin.ts        # 管理后台
-│   ├── services/           # 业务服务
-│   ├── middleware/          # 中间件（认证、校验）
-│   ├── validators/         # Zod 参数校验
-│   ├── utils/              # 工具函数
-│   └── database.ts         # 数据库迁移与种子
-├── server.ts               # 服务入口
-├── email-templates.ts      # 邮件模板
-├── tests/                  # 测试文件
-└── example/                # Vue 接入示例（独立应用）
+├── src/                      # 前端源码（React + TanStack Router）
+│   ├── pages/                # 页面组件（含 pages/admin/ 管理后台）
+│   ├── routes/                # 路由定义（hash 路由）
+│   └── utils/fetch.ts        # 请求封装
+├── server/
+│   ├── routes/                # API 路由（auth/oidc/admin/mfa/scim/user/federation/well-known/health）
+│   ├── oauth/                 # OAuth/OIDC 核心逻辑（grant 注册表、client-auth、jwt、introspect/revoke、dpop、par…）
+│   ├── services/              # 业务服务（keys/mfa/rbac/risk/ai-assist/geoip/cache/identity-link/ldap…）
+│   ├── jobs/                  # 定时任务（scheduler.ts 选主、ueba.job.ts）
+│   ├── middleware/             # 认证、租户上下文、限流、IP 白名单
+│   ├── validators/            # Zod 参数校验
+│   ├── utils/                  # 工具函数（audit、metrics、redact、device-fingerprint…）
+│   ├── schema.ts               # Drizzle 表定义（唯一 schema 源）
+│   └── database.ts             # 连接池、迁移、种子数据
+├── drizzle/                    # 生成的 SQL 迁移文件（`pnpm db:generate` 产出）
+├── deploy/helm/idp-center/     # Helm chart
+├── tests/                      # Vitest 测试（单元/属性 + tests/integration 集成）
+├── server.ts                   # 服务入口
+└── example/                    # 独立的 Vue 3 接入示例（不是主应用的一部分）
 ```
 
 ---
@@ -101,210 +107,139 @@ idp-center/
 
 ### 环境要求
 
-- Node.js >= 18
-- pnpm
+- Node.js >= 18，pnpm
+- PostgreSQL 16（本地可用 Docker 起）
 
 ### 安装与运行
 
 ```bash
-# 1. 安装依赖
+# 1. 起本地 PostgreSQL
+docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=idp_center postgres:16
+
+# 2. 安装依赖
 pnpm install
 
-# 2. 配置环境变量
+# 3. 配置环境变量
 cp .env.example .env
-# 编辑 .env 填入实际配置
+# 编辑 .env：至少配置 JWT_SECRET、SMTP_*、PG_* 或 DATABASE_URL
 
-# 3. 启动开发服务器
+# 4. 启动开发服务器（开发环境会自动 drizzle-kit push 建表 + 播种默认数据）
 pnpm dev
 ```
 
 访问 http://localhost:5986
 
-### 默认账号（仅开发环境）
+### 默认账号（仅开发环境，首次启动随机生成并打印在控制台）
 
-| 角色 | 用户名 | 密码 |
+| 角色 | 用户名 | 说明 |
 |------|--------|------|
-| 管理员 | `admin` | `Admin@IdpCenter2024!` |
+| 管理员 | `admin` | 首次登录强制修改密码 |
 
-> ⚠️ 生产环境请立即修改默认密码
+同时会生成一个默认 OAuth 客户端（`client_id = default-client`），client secret 一并打印在启动日志中。
 
-### 默认 OAuth 客户端
-
-| 字段 | 值 |
-|------|-----|
-| client_id | `default-client` |
-| client_secret | `secret123` |
+> ⚠️ 生产环境请勿依赖控制台打印的随机凭据，部署后立即在管理后台轮换。
 
 ---
 
 ## ⚙️ 环境变量
 
-在 `.env` 文件中配置（参考 `.env.example`）：
+完整列表见 [`.env.example`](.env.example)，按功能分组的关键变量：
 
-| 变量 | 必需 | 说明 |
-|------|------|------|
-| `APP_URL` | ✅ | 应用访问地址，用于 OAuth 回调、邮件链接 |
-| `JWT_SECRET` | ✅ | JWT 签名密钥（至少 32 字符） |
-| `JWT_REFRESH_SECRET` | ✅ | Refresh Token 密钥（至少 32 字符） |
-| `SMTP_HOST` | ✅ | SMTP 服务器地址 |
-| `SMTP_PORT` | ✅ | SMTP 端口 |
-| `SMTP_USER` | ✅ | SMTP 用户名 |
-| `SMTP_PASS` | ✅ | SMTP 密码 |
-| `SMTP_FROM` | ✅ | 发件人地址 |
-| `GITHUB_CLIENT_ID` | ❌ | GitHub OAuth Client ID |
-| `GITHUB_CLIENT_SECRET` | ❌ | GitHub OAuth Client Secret |
-| `GITHUB_CALLBACK_URL` | ❌ | GitHub 回调地址（默认自动推断） |
-| `ENCRYPTION_KEY` | ❌ | 加密密钥（至少 32 字符） |
-| `DB_PATH` | ❌ | 数据库路径（默认 `auth.db`） |
-| `JWT_EXPIRES_IN` | ❌ | Token 过期时间（默认 `1h`） |
+| 分组 | 变量 | 必需 | 说明 |
+|------|------|------|------|
+| 基础 | `APP_URL` / `JWT_SECRET` | ✅ | 应用地址（issuer）、JWT 签名密钥（≥32 字符） |
+| 邮件 | `SMTP_HOST/PORT/USER/PASS/FROM` | ✅ | 用于验证邮件、密码重置、Email OTP |
+| 数据库 | `DATABASE_URL` 或 `PG_HOST/PORT/USER/PASSWORD/DATABASE` | ✅ | PostgreSQL 连接；`PG_POOL_MAX/PG_IDLE_TIMEOUT_SEC/PG_CONNECT_TIMEOUT_SEC` 可调连接池 |
+| 加密 | `ENCRYPTION_KEY` | 推荐 | 私钥/IdP 配置等敏感字段的 AES-256-GCM 密钥，未设置回退 `JWT_SECRET` |
+| GitHub 登录 | `GITHUB_CLIENT_ID/SECRET/CALLBACK_URL` | ❌ | 未配置则登录页不显示 GitHub 按钮 |
+| OAuth 强校验 | `OAUTH_ENFORCE_GRANT_TYPES` | ❌ | 开启后强制校验客户端 `grant_types`（先 warn-only 灰度） |
+| MFA/SMS | `SMS_PROVIDER`、`ALIYUN_SMS_*`、`TENCENT_SMS_*` | ❌ | 默认 `console`（仅打日志，供 dev/test） |
+| 风险引擎 | `RISK_ENGINE_MODE`、`GEOIP_DB_PATH` | ❌ | `off\|shadow\|enforce`；GeoIP 库路径未设置则地理信号禁用 |
+| AI 辅助 | `ANTHROPIC_API_KEY` | ❌ | 未设置则 `/api/admin/ai/*` 全部返回 501 |
+| 缓存/限流 | `REDIS_URL` | ❌ | 未设置退回单实例内存实现（多副本部署前必须配置） |
+| 可观测性 | `METRICS_TOKEN`、`APP_VERSION` | ❌ | `/metrics` 的 Bearer 保护；未设置仅私网 IP 可访问 |
 
 ---
 
 ## 🔧 GitHub OAuth 配置
 
-### 1. 创建 GitHub OAuth App
+1. GitHub → **Settings → Developer settings → OAuth Apps → New OAuth App**
+2. Authorization callback URL 填 `http://localhost:5986/api/auth/github/callback`（生产环境改为实际域名）
+3. 复制 Client ID / Secret 写入 `.env` 的 `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`
 
-1. 打开 GitHub → **Settings** → **Developer settings** → **OAuth Apps** → **New OAuth App**
-2. 填写以下信息：
-   - **Application name**：如 `IdP Center`
-   - **Homepage URL**：`http://localhost:5986`（生产环境改为实际域名）
-   - **Authorization callback URL**：`http://localhost:5986/api/auth/github/callback`
-3. 点击 **Register application**
-4. 复制 **Client ID**，点击 **Generate a new client secret** 并复制
-
-### 2. 配置环境变量
-
-```env
-GITHUB_CLIENT_ID=your_client_id_here
-GITHUB_CLIENT_SECRET=your_client_secret_here
-
-# 可选，默认值为 http://localhost:5986/api/auth/github/callback
-# GITHUB_CALLBACK_URL=https://yourdomain.com/api/auth/github/callback
-```
-
-### 3. 生产环境部署
-
-1. 将 `GITHUB_CALLBACK_URL` 改为实际域名：
-   ```env
-   GITHUB_CALLBACK_URL=https://yourdomain.com/api/auth/github/callback
-   ```
-2. 同步更新 GitHub OAuth App 设置中的 **Authorization callback URL**
-
-> 未配置 `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` 时，登录页不会显示 GitHub 登录按钮，功能自动禁用。
+未配置时该功能自动禁用，登录页不显示按钮。
 
 ---
 
 ## 📡 API 概览
 
-### 认证接口 `/api/auth`
+完整端点、请求/响应结构见各路由文件（`server/routes/*.ts`、`server/routes/federation/*.ts`）；下表仅列出模块入口。
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/register` | 用户注册 |
-| POST | `/login` | 用户登录 |
-| POST | `/logout` | 用户登出 |
-| POST | `/refresh` | 刷新 Token |
-| GET | `/me` | 获取当前用户信息 |
-| POST | `/otp/setup` | 设置 OTP |
-| POST | `/otp/verify` | 验证 OTP |
-| POST | `/email/verify` | 验证邮箱 |
-| POST | `/email/resend` | 重发验证邮件 |
-| POST | `/password/reset-request` | 请求密码重置 |
-| POST | `/password/reset` | 执行密码重置 |
-| POST | `/password/change-expired` | 修改过期密码 |
-| POST | `/password/validate` | 校验密码强度 |
-
-### OIDC 接口 `/api/oidc`
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/.well-known/openid-configuration` | OIDC 发现端点 |
-| GET | `/.well-known/jwks.json` | JWKS 端点 |
-| GET | `/authorize` | 授权端点 |
-| POST | `/token` | Token 端点 |
-| GET | `/userinfo` | UserInfo 端点 |
-
-### GitHub OAuth `/api/auth/github`
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/config` | 获取 GitHub OAuth 配置 |
-| GET | `/` | 发起 GitHub 登录 |
-| GET | `/callback` | GitHub 回调 |
-| POST | `/exchange` | 交换 Token |
-
-### 管理接口 `/api/admin`
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/users` | 用户列表 |
-| POST | `/users` | 创建用户 |
-| PUT | `/users/:id` | 更新用户 |
-| DELETE | `/users/:id` | 删除用户 |
-| POST | `/users/:id/ban` | 封禁用户 |
-| POST | `/users/:id/unban` | 解封用户 |
-| GET | `/clients` | 客户端列表 |
-| POST | `/clients` | 创建客户端 |
-| PUT | `/clients/:id` | 更新客户端 |
-| DELETE | `/clients/:id` | 删除客户端 |
-| POST | `/clients/:id/rotate-secret` | 轮换客户端密钥 |
-| GET | `/tenants` | 租户列表 |
-| POST | `/tenants` | 创建租户 |
-| GET | `/sessions` | 会话列表 |
-| GET | `/audit` | 审计日志 |
-| GET | `/stats` | 系统统计 |
+| 前缀 | 模块 | 关键能力 |
+|------|------|----------|
+| `/api/auth` | 认证 | 注册/登录/登出/刷新、MFA 挑战与验证、密码重置、邮箱验证 |
+| `/api/auth/github` | GitHub OAuth | 发起登录、回调、Token 交换 |
+| `/api/oidc` | OIDC/OAuth2 | `/authorize`、`/token`（grant 注册表）、`/userinfo`、`/introspect`、`/revoke`、`/device_authorization`、`/par`、`/register`（动态客户端）、`/end_session` |
+| `/.well-known` | 发现 | `openid-configuration`、`jwks.json`（租户无关，独立挂载） |
+| `/api/user` | 用户自服务 | 资料、密码、会话、可信设备、已关联账号、数据导出 |
+| `/api/user/mfa` | MFA | TOTP/Email/SMS/WebAuthn 注册与校验、恢复码、注销因子 |
+| `/api/federation` | 联合身份 | `/:alias/saml/{login,acs,metadata}`、`/:alias/oidc/{login,callback}`、`/:alias/ldap/login` |
+| `/scim/v2` | SCIM 2.0 | `/Users`、`/Groups`，客户端凭证 + `scim:read`/`scim:write` scope 认证 |
+| `/api/admin` | 管理后台 | 用户/客户端/租户/会话/审计/合规报表/IdP 管理/RBAC，以及本次新增的 `/risk/*`、`/ai/*` |
+| `/` (根路径) | 健康检查 | `/livez`、`/readyz`、`/metrics`（Prometheus）、`/health`（兼容） |
 
 ---
 
 ## 🧪 测试
 
 ```bash
-# 运行所有测试
-pnpm test
-
-# 类型检查
-pnpm lint
-
-# 构建
-pnpm build
+pnpm test    # Vitest：单元 + 属性测试(fast-check) + 集成测试
+pnpm lint    # tsc --noEmit 类型检查
+pnpm build   # 前端 + 后端构建
 ```
 
-测试覆盖：352 个测试用例，包括：
-- 单元测试（验证器、工具函数、服务）
-- 集成测试（API 端点）
-- 属性测试（fast-check 用于密码策略等）
+- 单元/属性测试无需数据库即可运行；`tests/integration/*.test.ts` 通过 `describe.skipIf(!DATABASE_URL && !PG_HOST)` 在没有可用 PostgreSQL 时自动跳过。
+- 越权类断言单独成文件（`tests/integration/rbac.test.ts`）。
+
+---
+
+## 🗄️ 数据库迁移
+
+```bash
+pnpm db:generate   # 改动 server/schema.ts 后生成 drizzle/*.sql
+pnpm db:migrate    # 生产环境部署前执行；应用启动本身不再自动 push
+pnpm db:push       # 仅限本地开发：跳过生成迁移文件直接同步 schema
+pnpm db:studio     # 可视化查看数据
+```
+
+`NODE_ENV=production` 时 `initDatabase()` 不会再自动跑 `drizzle-kit push`（历史上这个行为在多副本部署下会产生竞态）；部署流水线或 Helm 的 `db-migrate` initContainer 需要先执行 `pnpm db:migrate`。
 
 ---
 
 ## 🐳 Docker 部署
 
-### 构建镜像
-
 ```bash
 docker build -t idp-center .
-```
 
-### 多架构构建（适用于 Apple Silicon 和 x86_64）
-
-```bash
+# 多架构构建（Apple Silicon / x86_64）
 docker buildx build --platform linux/amd64,linux/arm64 -t idp-center:latest --push .
-```
 
-### 运行容器
-
-```bash
 docker run -d \
   --name idp-center \
   -p 5986:5986 \
-  -v $(pwd)/auth.db:/app/auth.db \
+  --env-file .env \
   idp-center
 ```
+
+镜像启动前需要能连接到一个已运行的 PostgreSQL（见环境变量表），并已执行过 `pnpm db:migrate`（生产模式下容器自身不再建表）。
+
+多副本部署请参考 [deploy/helm/idp-center](deploy/helm/idp-center)：需要先配置好 `REDIS_URL`（共享限流/缓存）与迁移流水线，任务选主基于 PG advisory lock 自动生效、无需额外配置。
 
 ---
 
 ## 📚 示例应用
 
-`example/` 目录包含一个 Vue 3 接入示例，演示如何对接 IDP Center 的认证能力：
+`example/` 是一个独立的 Vue 3 接入示例，演示如何对接 IDP Center 的认证能力（不是主应用源码的一部分）：
 
 ```bash
 cd example

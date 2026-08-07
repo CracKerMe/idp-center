@@ -6,7 +6,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { config, rootDir } from './server/config.js';
 import { db, initDatabase } from './server/database.js';
-import { cleanupExpiredTokens } from './server/utils/cleanup.js';
+import { startScheduler } from './server/jobs/scheduler.js';
 import authRouter from './server/routes/auth.js';
 import oidcRouter from './server/routes/oidc.js';
 import wellKnownRouter from './server/routes/well-known.js';
@@ -100,8 +100,7 @@ export async function startServer() {
 
   const server = app.listen(config.PORT, '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${config.PORT}`);
-    cleanupExpiredTokens();
-    setInterval(cleanupExpiredTokens, 3600000);
+    startScheduler();
   });
 
   return server;

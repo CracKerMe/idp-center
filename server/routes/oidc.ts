@@ -22,6 +22,7 @@ import { handlePar, peekPar, resolvePar, PAR_REQUEST_URI_PREFIX } from '../oauth
 import { handleRegister, handleRegistrationRead, handleRegistrationUpdate, handleRegistrationDelete } from '../oauth/dynamic-registration.js';
 import { getUserRoleNames, getUserGroupNames } from '../services/rbac.service.js';
 import { tokenIssued } from '../utils/metrics.js';
+import { rateLimit } from '../middleware/rate-limit.js';
 
 const router = express.Router();
 
@@ -215,8 +216,15 @@ router.post('/authorize', authenticateToken, async (req, res) => {
   res.json(success({ redirect_url: redirectUrl.toString() }));
 });
 
+const tokenRateLimit = rateLimit({
+  name: 'token',
+  limit: 30,
+  windowSec: 60,
+  keyFn: (req) => `${req.ip || 'unknown'}:${req.body?.client_id || 'unknown'}`,
+});
+
 // POST /api/oidc/token
-router.post('/token', async (req, res) => {
+router.post('/token', tokenRateLimit, async (req, res) => {
   try {
     const grantType = req.body?.grant_type;
     if (!grantType) throw new OAuthError('invalid_request', 400, 'grant_type is required');
@@ -326,8 +334,18 @@ router.get('/register/:client_id', handleRegistrationRead);
 router.put('/register/:client_id', handleRegistrationUpdate);
 router.delete('/register/:client_id', handleRegistrationDelete);
 
+const deviceAuthRateLimit = rateLimit({ name: 'device_authorization', limit: 20, windowSec: 60 });
+// Low limit + per-session (not per-IP) key: a low-entropy user_code is guessable, so wrong
+// guesses within one browser session get locked out fast (implementation plan §1.4).
+const deviceVerifyRateLimit = rateLimit({
+  name: 'device_verify',
+  limit: 5,
+  windowSec: 300,
+  keyFn: (req) => `${req.ip || 'unknown'}:${req.user?.id || 'anon'}`,
+});
+
 // POST /api/oidc/device_authorization
-router.post('/device_authorization', async (req, res) => {
+router.post('/device_authorization', deviceAuthRateLimit, async (req, res) => {
   try {
     const client = await authenticateClient(req);
     assertGrantAllowed(client.grantTypes, 'urn:ietf:params:oauth:grant-type:device_code', client.clientId);
@@ -379,7 +397,7 @@ router.post('/device_authorization', async (req, res) => {
 });
 
 // GET /api/oidc/device/verify
-router.get('/device/verify', authenticateToken, async (req, res) => {
+router.get('/device/verify', authenticateToken, deviceVerifyRateLimit, async (req, res) => {
   const userCode = normalizeUserCode(typeof req.query.user_code === 'string' ? req.query.user_code : '');
   const tenantId = req.tenantId;
 

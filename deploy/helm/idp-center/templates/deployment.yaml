@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "idp-center.fullname" . }}
+  labels:
+    {{- include "idp-center.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "idp-center.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "idp-center.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "idp-center.serviceAccountName" . }}
+      {{- if .Values.migration.enabled }}
+      # Applies drizzle/*.sql (generated via `pnpm db:generate`) before any replica starts —
+      # server/database.ts's initDatabase() intentionally no-ops the schema push in
+      # NODE_ENV=production, see implementation plan §4.1.
+      initContainers:
+        - name: db-migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          # The distroless base image has no shell, so this bypasses the npm-generated
+          # node_modules/.bin symlink and invokes drizzle-kit's CLI entry directly via node.
+          command: ["/nodejs/bin/node", "node_modules/drizzle-kit/bin.cjs", "migrate"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "idp-center.fullname" . }}-config
+            - secretRef:
+                name: {{ include "idp-center.secretName" . }}
+      {{- end }}
+      containers:
+        - name: idp-center
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.targetPort }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "idp-center.fullname" . }}-config
+            - secretRef:
+                name: {{ include "idp-center.secretName" . }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]

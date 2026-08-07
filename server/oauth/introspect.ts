@@ -49,6 +49,7 @@ export async function handleIntrospect(req: Request, res: Response): Promise<voi
         exp: Math.floor(row.expiresAt.getTime() / 1000),
         iat: row.createdAt ? Math.floor(row.createdAt.getTime() / 1000) : undefined,
         sub: row.userId,
+        sub_type: row.subjectType,
         tenant_id: row.tenantId,
       });
       return;

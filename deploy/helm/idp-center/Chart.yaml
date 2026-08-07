@@ -1,0 +1,6 @@
+apiVersion: v2
+name: idp-center
+description: Enterprise OIDC/OAuth2 identity provider (see ENTERPRISE-OAUTH-ANALYSIS-COMPLETE.md phase 4.4)
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

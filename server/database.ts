@@ -5,7 +5,7 @@ import crypto from 'crypto';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
-import { connectionString } from './config.js';
+import { connectionString, config } from './config.js';
 import * as schema from './schema.js';
 import { users, tenants, clients, accessTokens } from './schema.js';
 import { eq, isNull, sql } from 'drizzle-orm';
@@ -15,27 +15,38 @@ import { migrateLegacyAdminsToRoles } from './services/rbac.service.js';
 import { migrateLegacyLinkedAccounts } from './services/identity-link.service.js';
 
 const client = postgres(connectionString, {
-  connect_timeout: 10, // fail fast if PG is unreachable
+  connect_timeout: config.PG_CONNECT_TIMEOUT_SEC, // fail fast if PG is unreachable
+  max: config.PG_POOL_MAX,
+  idle_timeout: config.PG_IDLE_TIMEOUT_SEC,
 });
 export const db = drizzle(client, { schema });
 
 const execAsync = promisify(exec);
 
 export async function initDatabase() {
-  // Push Drizzle schema to PostgreSQL (idempotent — safe to run every startup)
-  try {
-    const { stderr } = await execAsync('npx drizzle-kit push', {
-      cwd: process.cwd(),
-      timeout: 30_000,
-    });
-    if (stderr) console.log(stderr);
-  } catch (e: any) {
-    if (e.killed) {
-      console.warn('⚠️  Schema push timed out after 30s — run "pnpm db:push" manually');
-    } else if (e.code === 'ENOENT' || e.message?.includes('ENOENT')) {
-      console.warn('⚠️  drizzle-kit not found — skipping schema push (run "pnpm db:push" manually)');
-    } else {
-      console.error('⚠️  Schema push failed:', e.message);
+  // `drizzle-kit push` diffs the live schema and applies whatever's missing — convenient for
+  // dev/test, but with no generated migration file it can't be reviewed, versioned, or rolled
+  // back, and running it from every replica's boot races when scaled out (implementation plan
+  // §4.1). Production instead expects the deploy pipeline (or the Helm initContainer, see
+  // deploy/helm/) to have already run `pnpm db:migrate` against drizzle/*.sql before any
+  // replica starts; initDatabase() here only ever pushes in dev/test.
+  if (config.NODE_ENV === 'production') {
+    console.log('NODE_ENV=production — skipping drizzle-kit push. Schema must already be applied via `pnpm db:migrate`.');
+  } else {
+    try {
+      const { stderr } = await execAsync('npx drizzle-kit push', {
+        cwd: process.cwd(),
+        timeout: 30_000,
+      });
+      if (stderr) console.log(stderr);
+    } catch (e: any) {
+      if (e.killed) {
+        console.warn('⚠️  Schema push timed out after 30s — run "pnpm db:push" manually');
+      } else if (e.code === 'ENOENT' || e.message?.includes('ENOENT')) {
+        console.warn('⚠️  drizzle-kit not found — skipping schema push (run "pnpm db:push" manually)');
+      } else {
+        console.error('⚠️  Schema push failed:', e.message);
+      }
     }
   }
 
@@ -60,7 +71,7 @@ async function backfillAccessTokenHashes(): Promise<void> {
       .update(accessTokens)
       .set({ tokenHash: sql`encode(digest(${accessTokens.token}, 'sha256'), 'hex')` })
       .where(isNull(accessTokens.tokenHash));
-    const count = (result as any).rowCount ?? 0;
+    const count = (result as any).count ?? 0;
     if (count > 0) console.log(`✓ Backfilled token_hash for ${count} access token(s)`);
   } catch (e: any) {
     // pgcrypto may be unavailable; fall back to hashing in Node.

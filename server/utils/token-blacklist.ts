@@ -41,7 +41,7 @@ export async function revokeToken(
       .set({ revoked: true, revokedAt: new Date(), revokeReason: reason })
       .where(and(eq(accessTokens.tokenHash, tokenHash), eq(accessTokens.revoked, false)));
 
-    return ((result as any).rowCount ?? 0) > 0;
+    return ((result as any).count ?? 0) > 0;
   } catch (error) {
     console.error('Failed to revoke token:', error);
     return false;
@@ -82,8 +82,8 @@ export async function revokeTokensBySession(
     .where(and(eq(refreshTokens.oidcSessionId, oidcSessionId), eq(refreshTokens.revoked, false)));
 
   return {
-    accessTokens: (atResult as any).rowCount ?? 0,
-    refreshTokens: (rtResult as any).rowCount ?? 0,
+    accessTokens: (atResult as any).count ?? 0,
+    refreshTokens: (rtResult as any).count ?? 0,
   };
 }
 
@@ -100,7 +100,7 @@ export async function revokeAllUserTokens(
       .set({ revoked: true, revokedAt: new Date(), revokeReason: reason })
       .where(and(eq(accessTokens.userId, userId), eq(accessTokens.revoked, false)));
 
-    return (result as any).rowCount ?? 0;
+    return (result as any).count ?? 0;
   } catch (error) {
     console.error('Failed to revoke user tokens:', error);
     return 0;
@@ -126,7 +126,7 @@ export async function revokeOtherUserTokens(
         eq(accessTokens.revoked, false)
       ));
 
-    return (result as any).rowCount ?? 0;
+    return (result as any).count ?? 0;
   } catch (error) {
     console.error('Failed to revoke other user tokens:', error);
     return 0;
@@ -207,7 +207,7 @@ export async function cleanupRevokedTokens(): Promise<number> {
       .delete(accessTokens)
       .where(and(eq(accessTokens.revoked, true), lt(accessTokens.expiresAt, new Date())));
 
-    return (result as any).rowCount ?? 0;
+    return (result as any).count ?? 0;
   } catch (error) {
     console.error('Failed to cleanup revoked tokens:', error);
     return 0;
@@ -229,7 +229,7 @@ export async function batchRevokeByUserIds(
       .set({ revoked: true, revokedAt: new Date(), revokeReason: reason })
       .where(and(inArray(accessTokens.userId, userIds), eq(accessTokens.revoked, false)));
 
-    return (result as any).rowCount ?? 0;
+    return (result as any).count ?? 0;
   } catch (error) {
     console.error('Failed to batch revoke tokens:', error);
     return 0;

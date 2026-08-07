@@ -1,6 +1,6 @@
 状态：active
 范围：主应用 / API 契约
-最后核对：2026-04-19
+最后核对：2026-08-07（核对结论：内容与代码一致，阶段三/四改动未涉及此模块，无需变更）
 事实来源：server/routes/admin.ts, server/validators/admin.validator.ts, server/middleware/ip-whitelist.ts
 替代文档：无
 

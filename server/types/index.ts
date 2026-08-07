@@ -138,9 +138,27 @@ export interface AuditLog {
   created_at: string;
 }
 
+// ---------------------------------------------------------------------------
+// Legacy SQLite-era type interfaces.
+// Only JwtUserPayload is still imported (by server/middleware/auth.ts).
+// The rest are unused pre-PostgreSQL leftovers — kept temporarily for reference.
+// ---------------------------------------------------------------------------
+
 export interface JwtUserPayload {
   id: string;
   username: string;
-  is_admin: number;
+  is_admin: boolean;
   tenant_id: string;
+  /** Browser session id — embedded at login (server/routes/auth.ts completeLogin) */
+  bsid?: string;
+  /** RFC 8176 auth method references, e.g. ['pwd'] or ['pwd','otp'] */
+  amr?: string[];
+  /** Authentication context class reference — '0' password-only, '1' password+MFA */
+  acr?: string;
+  /** Token subject type: 'user' for normal tokens, 'client' for client_credentials */
+  sub_type?: 'user' | 'client';
+  /** DPoP confirmation (RFC 9449) */
+  cnf?: { jkt?: string };
+  /** Unique token id */
+  jti?: string;
 }

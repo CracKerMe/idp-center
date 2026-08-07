@@ -18,6 +18,10 @@ import { success, error, message, ErrorCode, ApiResponse } from '../utils/respon
 import { revokeToken, revokeAllUserTokens, RevokeReason } from '../utils/token-blacklist.js';
 import { loginAttempts, mfaChallenge, mfaVerify } from '../utils/metrics.js';
 import { signAccessToken } from '../oauth/jwt.js';
+import { assessLoginRisk, recordLoginEvent, RiskAssessment } from '../services/risk.service.js';
+import { logger } from '../utils/logger.js';
+import { computeDeviceFingerprint } from '../utils/device-fingerprint.js';
+import { rateLimit } from '../middleware/rate-limit.js';
 import { users, accessTokens, refreshTokens, sessions, emailVerifications, passwordResets, trustedDevices, accountDeletionRequests, mfaFactors, authCodes, identityProviders } from '../schema.js';
 import { eq, and, gt, inArray, desc } from 'drizzle-orm';
 import {
@@ -52,11 +56,6 @@ const mfaVerifySchema = z.object({
 
 const router = express.Router();
 
-function computeDeviceFingerprint(userAgent: string, ip: string): string {
-  const salt = config.ENCRYPTION_KEY || config.JWT_SECRET;
-  return crypto.createHmac('sha256', salt).update(userAgent + ip).digest('hex');
-}
-
 /** amr: RFC 8176 auth method references. acr: '0' password-only, '1' password+second-factor. */
 function computeAcr(amr: string[]): string {
   return amr.length > 1 ? '1' : '0';
@@ -83,6 +82,7 @@ async function completeLogin(user: UserRow, req: express.Request, opts: {
   amr: string[];
   deviceTrusted: boolean;
   mfaEnrollmentRequired?: boolean;
+  riskAssessment?: RiskAssessment;
 }): Promise<ApiResponse> {
   const tenantId = req.tenantId || user.tenantId || 'default';
   const userAgent = req.get('User-Agent') || '';
@@ -153,6 +153,10 @@ async function completeLogin(user: UserRow, req: express.Request, opts: {
 
   await logAudit({ req, action: AuditAction.LOGIN_SUCCESS, userId: user.id, details: `Session: ${sessionId}; amr=${opts.amr.join(',')}`, tenantId: tenantId });
   loginAttempts.inc({ outcome: 'success', method: opts.amr.join(','), tenant_id: tenantId });
+  recordLoginEvent({
+    userId: user.id, tenantId, outcome: 'success', ip, userAgent,
+    deviceFingerprint: opts.deviceFingerprint, authMethods: opts.amr, assessment: opts.riskAssessment,
+  }).catch((err) => logger.warn(`recordLoginEvent failed: ${err.message}`));
 
   return success({
     access_token: accessToken,
@@ -219,8 +223,15 @@ router.post('/register', validate({ body: registerSchema }), async (req, res) =>
   }
 });
 
+const loginRateLimit = rateLimit({
+  name: 'login',
+  limit: 10,
+  windowSec: 60,
+  keyFn: (req) => `${req.ip || 'unknown'}:${req.tenantId || 'default'}:${(req.body?.username || '').toLowerCase()}`,
+});
+
 // POST /api/auth/login
-router.post('/login', validate({ body: loginSchema }), async (req, res) => {
+router.post('/login', loginRateLimit, validate({ body: loginSchema }), async (req, res) => {
   const { username, password, remember_me, trust_device } = req.body;
   const tenantId = req.tenantId;
 
@@ -258,6 +269,10 @@ router.post('/login', validate({ body: loginSchema }), async (req, res) => {
     }
     await logAudit({ req, action: AuditAction.LOGIN_FAILED, userId: user.id, details: `Failed login for ${username}`, tenantId: tenantId });
     loginAttempts.inc({ outcome: 'fail', method: 'password', tenant_id: tenantId });
+    recordLoginEvent({
+      userId: user.id, tenantId, outcome: 'fail',
+      ip: req.ip || req.connection.remoteAddress || 'unknown', userAgent: req.get('User-Agent') || '',
+    }).catch((err) => logger.warn(`recordLoginEvent failed: ${err.message}`));
     return res.status(401).json(error('Invalid credentials', ErrorCode.AUTH_INVALID_CREDENTIALS));
   }
 
@@ -300,11 +315,32 @@ router.post('/login', validate({ body: loginSchema }), async (req, res) => {
   const deviceFingerprint = computeDeviceFingerprint(userAgent, ip);
   const now = new Date();
 
+  // Adaptive auth (implementation plan §3.1). assessLoginRisk() is a no-op read when
+  // RISK_ENGINE_MODE=off; in 'shadow' the score/action are computed and recorded but never
+  // change the response — only 'enforce' lets risk_policies actually gate the login.
+  const riskAssessment = await assessLoginRisk({ userId: user.id, tenantId, ip, userAgent, deviceFingerprint });
+  const riskEnforced = config.RISK_ENGINE_MODE === 'enforce';
+
+  if (riskEnforced && riskAssessment.action === 'deny') {
+    await logAudit({
+      req, action: AuditAction.RISK_LOGIN_DENIED, userId: user.id, tenantId,
+      details: `score=${riskAssessment.score} signals=${riskAssessment.signals.map((s) => s.code).join(',')}`,
+    });
+    loginAttempts.inc({ outcome: 'blocked', method: 'password', tenant_id: tenantId });
+    recordLoginEvent({ userId: user.id, tenantId, outcome: 'blocked', ip, userAgent, deviceFingerprint, assessment: riskAssessment })
+      .catch((err) => logger.warn(`recordLoginEvent failed: ${err.message}`));
+    return res.status(403).json(error('Login blocked by risk policy', ErrorCode.AUTH_RISK_DENIED));
+  }
+
   const activeFactors = await mfaService.getActiveFactors(user.id);
   const mfaEnabled = activeFactors.some(f => f.type !== 'recovery');
+  // A risk score demanding step-up only has teeth when the user actually has a second
+  // factor enrolled — with none, there is nothing to challenge with (forcing enrollment
+  // mid-login is a separate flow, out of scope here), so it silently falls back to 'allow'.
+  const riskForcesStepUp = riskEnforced && mfaEnabled && (riskAssessment.action === 'mfa_required' || riskAssessment.action === 'step_up');
 
   if (mfaEnabled) {
-    const [trustedDevice] = await db.select({ id: trustedDevices.id }).from(trustedDevices).where(and(
+    const [trustedDevice] = riskForcesStepUp ? [undefined] : await db.select({ id: trustedDevices.id }).from(trustedDevices).where(and(
       eq(trustedDevices.userId, user.id),
       eq(trustedDevices.deviceFingerprint, deviceFingerprint),
       gt(trustedDevices.expiresAt, now),
@@ -318,6 +354,7 @@ router.post('/login', validate({ body: loginSchema }), async (req, res) => {
         deviceFingerprint,
         amr: ['pwd'],
         deviceTrusted: true,
+        riskAssessment,
       });
       return res.json(result);
     }
@@ -338,6 +375,15 @@ router.post('/login', validate({ body: loginSchema }), async (req, res) => {
       { expiresIn: MFA_CONFIG.mfaTokenExpirySec }
     );
 
+    if (riskForcesStepUp) {
+      await logAudit({
+        req, action: AuditAction.RISK_LOGIN_CHALLENGED, userId: user.id, tenantId,
+        details: `score=${riskAssessment.score} signals=${riskAssessment.signals.map((s) => s.code).join(',')}`,
+      });
+    }
+    recordLoginEvent({ userId: user.id, tenantId, outcome: 'challenged', ip, userAgent, deviceFingerprint, assessment: riskAssessment })
+      .catch((err) => logger.warn(`recordLoginEvent failed: ${err.message}`));
+
     return res.status(403).json({
       ...error('MFA verification required', ErrorCode.AUTH_MFA_REQUIRED),
       data: {
@@ -356,13 +402,21 @@ router.post('/login', validate({ body: loginSchema }), async (req, res) => {
     amr: ['pwd'],
     deviceTrusted: false,
     mfaEnrollmentRequired,
+    riskAssessment,
   });
   res.json(result);
 });
 
 // POST /api/auth/mfa/challenge — for factor types that need a server-sent code (email/sms)
 // or a fresh WebAuthn challenge. TOTP and recovery codes are verified directly at /mfa/verify.
-router.post('/mfa/challenge', validate({ body: mfaChallengeSchema }), async (req, res) => {
+const otpSendRateLimit = rateLimit({
+  name: 'otp_send',
+  limit: 5,
+  windowSec: 300,
+  keyFn: (req) => `${req.ip || 'unknown'}:${req.body?.mfa_token ? crypto.createHash('sha256').update(req.body.mfa_token).digest('hex') : 'unknown'}`,
+});
+
+router.post('/mfa/challenge', otpSendRateLimit, validate({ body: mfaChallengeSchema }), async (req, res) => {
   const { mfa_token, factor_id } = req.body;
 
   let payload: any;
@@ -467,7 +521,17 @@ router.get('/me', authenticateToken, async (req, res) => {
   }).from(users).where(eq(users.id, req.user!.id)).limit(1);
 
   if (!user) return res.status(404).json(error('User not found', ErrorCode.RESOURCE_NOT_FOUND));
-  res.json(success(user));
+  res.json(success({
+    id: user.id,
+    username: user.username,
+    email: user.email,
+    full_name: user.fullName,
+    phone: user.phone,
+    avatar_url: user.avatarUrl,
+    is_admin: user.isAdmin,
+    otp_enabled: user.otpEnabled,
+    tenant_id: user.tenantId,
+  }));
 });
 
 // POST /api/auth/logout

@@ -83,6 +83,7 @@ async function findOrCreateUserFromGitHub(tenantId: string, identity: GitHubIden
   }, {
     linkByVerifiedEmail: true,
     providerAccessToken: accessToken,
+    defaultRoleIds: [],
   });
 }
 

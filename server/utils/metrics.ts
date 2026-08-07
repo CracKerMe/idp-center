@@ -141,6 +141,30 @@ export const cleanupItemsRemoved = new Counter({
   registers: [register],
 });
 
+// ─── Risk Engine Metrics (phase 3.1) ────────────────────────────────────────
+
+export const riskAssessments = new Counter({
+  name: 'idp_risk_assessments_total',
+  help: 'Total login risk assessments performed',
+  labelNames: ['action', 'mode', 'tenant_id'], // action: allow|mfa_required|step_up|deny, mode: shadow|enforce
+  registers: [register],
+});
+
+export const riskScoreHistogram = new Histogram({
+  name: 'idp_risk_score',
+  help: 'Distribution of computed login risk scores',
+  labelNames: ['tenant_id'],
+  buckets: [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150],
+  registers: [register],
+});
+
+export const uebaSessionRevocations = new Counter({
+  name: 'idp_ueba_session_revocations_total',
+  help: 'Total OIDC sessions revoked due to risk-score jump on refresh',
+  labelNames: ['tenant_id'],
+  registers: [register],
+});
+
 // ─── Helper Functions ───────────────────────────────────────────────────────
 
 /**

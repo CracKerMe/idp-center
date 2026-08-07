@@ -1,7 +1,7 @@
 # IDP Center 产品架构与演进路线图 (Product Roadmap)
 
 > [!NOTE]
-> 本文档定义了 IDP Center 在安全合规与企业级应用集成方面的核心演进路径，涵盖了必须实现的安全基座 (P0) 以及高商业价值的企业整合能力 (P1)。
+> 本文档定义了 IDP Center 在安全合规与企业级应用集成方面的早期演进路径（P0 安全基座 + P1 企业整合能力）。**本文档描述的全部能力现已实施完成**，后续更大范围的企业级/AI Native/云原生能力已并入 [ENTERPRISE-OAUTH-IMPLEMENTATION-PLAN.md](../ENTERPRISE-OAUTH-IMPLEMENTATION-PLAN.md) 的四阶段方案（该方案同样已全部实施），本文档保留作为历史背景与 P0/P1 范围的权威记录。
 
 ## 1. 业务架构概览
 
@@ -58,7 +58,9 @@ graph TD
 - **密码防泄漏检查**：集成常见弱口令字典库（185+ 条内置，支持自定义扩展），禁止设置系统预置的或已被广泛库暴露的弱密码。
 - **定期轮换机制**：强制企业员工周期性（如每 90 天）修改密码，登录时自动检测过期并提供专用修改端点。
 
-### 2.2 会话超时控制 (Session Timeout)
+### 2.2 会话超时控制 (Session Timeout) ✅
+
+> 已实现。`refresh_tokens` 有绝对过期时间（`TOKEN_CONFIG`，默认 7 天/记住我 30 天），配合 `oidc_sessions` 的登出联动（RP-initiated / front-channel / back-channel，见 [实施方案 §1.5](../ENTERPRISE-OAUTH-IMPLEMENTATION-PLAN.md)）实现集中式会话生命周期管理。
 
 - **绝对生命周期 (Absolute Timeout)**：会话达到设定的最大存活时长后，无论是否处于活跃状态均强制截断注销。
 - **空闲超时控制 (Idle Timeout)**：用户在设定时间内未发生任何交互或 Token 无刷新动作，则判定为失活并予以自动退出。
@@ -71,24 +73,30 @@ graph TD
 - **租户级网络隔离**：允许为指定租户（Tenant）的凭证库配置信任的安全 IP 段（支持 IPv4/IPv6 CIDR 格式配置）。
 - **异常访问阻断**：未在白名单中的源 IP 发起的登录/访问请求直接返回 HTTP 403 Forbidden，并在风控层面产生预警信息。
 
-### 2.4 审计日志与报告导出 (Audit Export)
+### 2.4 审计日志与报告导出 (Audit Export) ✅
+
+> 已实现，并超出原范围：新增哈希链防篡改（`GET /api/admin/audit/verify`）与 SOC2/GDPR 合规差距报表（`GET /api/admin/compliance/report`）。
 
 - **全要素行为留痕**：详细记录每一次重要动作发生的时间 (When)、操作人 (Who)、动作 (What)、变更结果 (Result) 及 IP 来源 (Where)。
 - **核心链路覆蓋**：全面覆蓋认证日志（登录成功/失败/锁定等）、系统配置审计、应用授权记录及系统数据修改等。
-- **格式化导出**：提供针对时间区间与操作实体的筛选功能，并生成供系统管理员和合规审计人员查看的标准（CSV / Excel）报表文件。
+- **格式化导出**：提供针对时间区间与操作实体的筛选功能，并生成供系统管理员和合规审计人员查看的标准（CSV / JSONL，流式输出）报表文件。
 
 ## 3. P1 阶段：企业级整合功能 (Enterprise Add-ons)
 
 > [!TIP]
 > **目标**：突破当前仅支持现代应用生态架构协议体系的局限，让老旧传统软件及需要统一组织管理架构下发的大型客户以零/低代码改造成本接入。
 
-### 3.1 基于组织架构的用户组权限 (Groups & RBAC)
+### 3.1 基于组织架构的用户组权限 (Groups & RBAC) ✅
+
+> 已实现：`roles`/`permissions`/`groups`/`user_roles`/`user_groups`/`group_roles` 表 + `server/services/rbac.service.ts`，`platform-admin`/`tenant-admin` 双层隔离，另补充了 SCIM 2.0（`/scim/v2`）对接 Okta/Azure AD。
 
 - **分层组织与用户组**：允许企业租户映射还原其真实"组织层级"或构建"业务逻辑用户组"，方便统一绑定授权。
 - **身份 Claims 注入**：将用户所包含的业务组信息 `groups` 与角色关联信息 `roles` 通过 OIDC ID Token 或 UserInfo 接口自动下发至各接入系统。
 - **零信任级资源授权**：支持以接入第三方 Client 登记为维度，设定应用级准入访问策略（例如：规定仅隶属"产研中心组"成员拥有登录 JIRA 的资格）。
 
-### 3.2 SSO 单点登出体系 (Single Logout)
+### 3.2 SSO 单点登出体系 (Single Logout) ✅
+
+> 已实现：`GET|POST /api/oidc/end_session` + `POST /api/oidc/end_session/confirm`，前端 `src/routes/logout.tsx` 负责渲染 front-channel iframe；`server/services/backchannel-logout.service.ts` 通过 `server/jobs/scheduler.ts` 定时投递 back-channel logout token。
 
 - **全局会话清理**：保障在一处退出的同时，其他已信任及派生会话流均失效的安全撤销联动。
 - **OIDC Front-Channel Logout**：基于浏览器不可见 Iframe 跳转的自动登出通知广播机制（低成本兼具普适性）。
@@ -99,5 +107,7 @@ graph TD
 | 开发阶段          | 状态 | 核心工作内容                                                        | 前置技术依赖梳理                                                  | 预计模块复杂度 |
 | :---------------- | :--- | :------------------------------------------------------------------ | :---------------------------------------------------------------- | :------------- |
 | **第一阶段 (P0)** | ✅ 已完成 | 密码安全策略、IP 拦截层核心中间件封装                               | 需要稳定统一的多租户数据模型以及底层统一路由中间件。              | 中等           |
-| **第二阶段 (P0)** | 待开发 | 全局操作审计基础结构搭建及 CSV 异步报表导出、中心态会话轮转逻辑控制 | 日志底层持久化落盘改造及高频查阅查询性能优化。                    | 中等           |
-| **第三阶段 (P1)** | 待开发 | 用户组体系（RBAC）基础建设、OIDC 单点登出（Back-Channel）改造实验   | 必须提前进行 Database Schema 的大规模迁移扩增（绑定组联结关系）。 | 高             |
+| **第二阶段 (P0)** | ✅ 已完成 | 全局操作审计基础结构搭建及 CSV 异步报表导出、中心态会话轮转逻辑控制 | 日志底层持久化落盘改造及高频查阅查询性能优化。                    | 中等           |
+| **第三阶段 (P1)** | ✅ 已完成 | 用户组体系（RBAC）基础建设、OIDC 单点登出（Back-Channel）改造实验   | 必须提前进行 Database Schema 的大规模迁移扩增（绑定组联结关系）。 | 高             |
+
+> 本文档范围内的三个阶段均已完成。后续企业级/AI Native/云原生能力（MFA 增强、联合身份、风险引擎、UEBA、LLM 辅助、Redis、多副本部署等）不再从本文档延伸，直接参见 [ENTERPRISE-OAUTH-IMPLEMENTATION-PLAN.md](../ENTERPRISE-OAUTH-IMPLEMENTATION-PLAN.md)（同样已全部实施）。

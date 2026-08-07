@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 // Helper to create chainable mock query builder
-// Drizzle select queries resolve to arrays, update/delete resolve to { rowCount }
-function createMockChain(returnRows: any[] = [], rowCount = 0) {
+// Drizzle select queries resolve to arrays, update/delete resolve to { count }
+// (postgres-js RowList exposes `.count`, NOT the node-postgres `.rowCount`).
+function createMockChain(returnRows: any[] = [], count = 0) {
   const chain: any = {};
   chain.where = vi.fn().mockReturnValue(chain);
   chain.set = vi.fn().mockReturnValue(chain);
@@ -14,12 +15,12 @@ function createMockChain(returnRows: any[] = [], rowCount = 0) {
   return chain;
 }
 
-// For update/delete — resolves with { rowCount }
-function createMockMutationResult(rowCount = 0) {
+// For update/delete — resolves with { count } (postgres-js driver)
+function createMockMutationResult(count = 0) {
   const chain: any = {};
   chain.where = vi.fn().mockReturnValue(chain);
   chain.set = vi.fn().mockReturnValue(chain);
-  chain.then = (resolve: any) => resolve({ rowCount });
+  chain.then = (resolve: any) => resolve({ count });
   chain[Symbol.toStringTag] = 'Promise';
   return chain;
 }

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import http from '../utils/http'
+import { OAUTH_CONFIG } from '../config'
 
 interface User {
   id: string
@@ -23,6 +24,57 @@ interface TokenData {
   session_id?: string
 }
 
+export interface MfaFactor {
+  id: string
+  type: 'totp' | 'email' | 'sms' | 'webauthn'
+  name?: string
+}
+
+/**
+ * Thrown by login() when POST /api/auth/login returns 403 AUTH_MFA_REQUIRED. The caller
+ * (Login.vue) catches this specifically to switch to the factor-selection step instead of
+ * showing a generic error — see server/routes/auth.ts's `completeLogin`/`mfa_token` flow.
+ */
+export class MfaRequiredError extends Error {
+  mfaToken: string
+  factors: MfaFactor[]
+  constructor(mfaToken: string, factors: MfaFactor[]) {
+    super('MFA verification required')
+    this.name = 'MfaRequiredError'
+    this.mfaToken = mfaToken
+    this.factors = factors
+  }
+}
+
+function randomState(): string {
+  const array = new Uint8Array(16)
+  crypto.getRandomValues(array)
+  return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('')
+}
+
+function base64url(bytes: ArrayBuffer | Uint8Array): string {
+  const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+  return btoa(String.fromCharCode(...arr)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '')
+}
+
+/** PKCE (RFC 7636, S256) — required by server/oauth/grants/authorization-code.ts whenever
+ *  /authorize was called with a code_challenge, which every flow below always sends. */
+async function generatePkce() {
+  const verifierBytes = new Uint8Array(32)
+  crypto.getRandomValues(verifierBytes)
+  const verifier = base64url(verifierBytes)
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))
+  return { verifier, challenge: base64url(digest) }
+}
+
+function safeReturnTo(returnTo: string | undefined, fallback = '/dashboard'): string {
+  if (!returnTo) return fallback
+  if (!returnTo.startsWith('/')) return fallback
+  if (returnTo.startsWith('//')) return fallback
+  if (returnTo.includes('://')) return fallback
+  return returnTo
+}
+
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
   const token = ref<string | null>(localStorage.getItem('token'))
@@ -32,57 +84,98 @@ export const useAuthStore = defineStore('auth', () => {
 
   const isAuthenticated = computed(() => !!token.value)
 
-  // Direct login (username/password)
-  async function login(username: string, password: string, otp?: string): Promise<boolean> {
+  /**
+   * Stores a successful login/MFA-verify response's tokens — shared by login() (no MFA
+   * enrolled) and mfaVerify() (MFA-enrolled), mirroring server/routes/auth.ts's
+   * completeLogin() being the single token-issuance entrypoint for both paths.
+   */
+  function applySuccessfulAuth(data: any) {
+    token.value = data.access_token
+    user.value = data.user
+    localStorage.setItem('token', data.access_token)
+    if (data.refresh_token) localStorage.setItem('refresh_token', data.refresh_token)
+    if (data.session_id) localStorage.setItem('session_id', data.session_id)
+    isInitialized.value = true
+  }
+
+  // Direct login (username/password). Throws MfaRequiredError when the account has an
+  // active MFA factor — the caller must then drive mfaChallenge()/mfaVerify().
+  async function login(username: string, password: string, opts?: { remember_me?: boolean; trust_device?: boolean }): Promise<boolean> {
     loading.value = true
     error.value = null
 
     try {
-      console.log('=== Login request ===')
       const response = await fetch('/api/auth/login', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ username, password, otp })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username,
+          password,
+          remember_me: opts?.remember_me ?? false,
+          trust_device: opts?.trust_device ?? false,
+        })
       })
 
       const json = await response.json()
       const data = json.data
-      console.log('Login response:', json)
-      console.log('Response status:', response.status)
-      console.log('access_token:', data?.access_token)
-      console.log('refresh_token:', data?.refresh_token)
-      console.log('user:', data?.user)
 
       if (!response.ok) {
-        if (data?.requireOtp) {
-          throw new Error('OTP_REQUIRED')
+        // 403 AUTH_MFA_REQUIRED — server/routes/auth.ts hands back a short-lived
+        // mfa_token + the account's active factors instead of real tokens.
+        if (response.status === 403 && json.code === 'AUTH_MFA_REQUIRED' && data?.mfa_token) {
+          throw new MfaRequiredError(data.mfa_token, data.factors || [])
         }
         throw new Error(json.error || 'Login failed')
       }
 
-      // Store tokens
-      console.log('Storing token to localStorage...')
-      token.value = data.access_token
-      user.value = data.user
-      localStorage.setItem('token', data.access_token)
-      console.log('Token stored:', localStorage.getItem('token'))
-      
-      if (data.refresh_token) {
-        localStorage.setItem('refresh_token', data.refresh_token)
-      }
-      
-      if (data.session_id) {
-        localStorage.setItem('session_id', data.session_id)
-      }
-      
-      isInitialized.value = true
-
-      console.log('=== Login completed successfully ===')
+      applySuccessfulAuth(data)
       return true
     } catch (err: any) {
-      console.error('Login error:', err)
+      if (!(err instanceof MfaRequiredError)) {
+        console.error('Login error:', err)
+        error.value = err.message
+      }
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
+
+  // Sends a one-time code for factor types that need one (email/sms). TOTP, recovery codes
+  // and WebAuthn are verified directly at mfaVerify() with no separate challenge step.
+  async function mfaChallenge(mfaToken: string, factorId: string): Promise<void> {
+    const response = await fetch('/api/auth/mfa/challenge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mfa_token: mfaToken, factor_id: factorId })
+    })
+    const json = await response.json()
+    if (!response.ok) throw new Error(json.error || 'Failed to send verification code')
+  }
+
+  // Completes login after the second factor is verified.
+  async function mfaVerify(mfaToken: string, factorId: string, code: string): Promise<boolean> {
+    loading.value = true
+    error.value = null
+
+    try {
+      const response = await fetch('/api/auth/mfa/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mfa_token: mfaToken, factor_id: factorId, code })
+      })
+
+      const json = await response.json()
+      const data = json.data
+
+      if (!response.ok) {
+        throw new Error(json.error || 'Verification failed')
+      }
+
+      applySuccessfulAuth(data)
+      return true
+    } catch (err: any) {
+      console.error('MFA verify error:', err)
       error.value = err.message
       throw err
     } finally {
@@ -240,70 +333,78 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  // OAuth2 Authorization Code Flow - Step 1: Redirect to authorization
-  function startOAuthFlow(clientId: string, redirectUri: string, state?: string): void {
+  const OAUTH_STATE_TTL_MS = 10 * 60 * 1000
+
+  // OAuth2 Authorization Code Flow, step 1: generate state + PKCE, stash them in
+  // sessionStorage keyed by state so Callback.vue can validate/retrieve them, then redirect
+  // to the IDP's hash-routed authorize page. This is the single implementation shared by
+  // Home.vue and Login.vue's "Single Sign-On" buttons — do not re-duplicate this logic in
+  // components, the nonce/PKCE bookkeeping is easy to get subtly wrong twice.
+  async function beginOAuthLogin(returnTo?: string): Promise<void> {
+    const state = randomState()
+    const resolvedReturnTo = safeReturnTo(returnTo)
+    const { verifier, challenge } = await generatePkce()
+
+    sessionStorage.setItem(
+      `oauth_state:${state}`,
+      JSON.stringify({ state, return_to: resolvedReturnTo, verifier, iat: Date.now() })
+    )
+
     const params = new URLSearchParams({
-      client_id: clientId,
-      redirect_uri: redirectUri,
+      client_id: OAUTH_CONFIG.clientId,
+      redirect_uri: OAUTH_CONFIG.redirectUri,
       response_type: 'code',
       scope: 'openid profile email',
-      state: state || generateRandomState()
+      state,
+      code_challenge: challenge,
+      code_challenge_method: 'S256'
     })
 
-    // Redirect to IDP Center's authorization page (hash mode)
-    window.location.href = `http://localhost:5986/#/authorize?${params.toString()}`
+    // Hash route — the SPA is served with createHashHistory, see src/App.tsx on the main app.
+    window.location.href = `${OAUTH_CONFIG.idpBaseUrl}/#/authorize?${params.toString()}`
   }
 
-  // OAuth2 Authorization Code Flow - Step 2: Exchange code for token
-  async function exchangeCodeForToken(
-    code: string,
-    clientId: string,
-    clientSecret: string,
-    redirectUri: string,
-    codeVerifier?: string
-  ): Promise<TokenData> {
+  /** Reads back and clears the state stashed by beginOAuthLogin(); null if invalid/expired/reused. */
+  function consumeOAuthState(state: string): { return_to?: string; verifier?: string } | null {
+    const key = `oauth_state:${state}`
+    const saved = sessionStorage.getItem(key)
+    sessionStorage.removeItem(key)
+    if (!saved) return null
+
+    try {
+      const record = JSON.parse(saved)
+      if (record.state !== state || Date.now() - record.iat > OAUTH_STATE_TTL_MS) return null
+      return record
+    } catch {
+      return null
+    }
+  }
+
+  // OAuth2 Authorization Code Flow, step 2: exchange the code for tokens. client_secret
+  // comes from OAUTH_CONFIG (see .env.example) — default-client's secret is generated
+  // randomly by the main app on first boot, there is no working hardcoded fallback anymore.
+  async function exchangeCodeForToken(code: string, codeVerifier?: string): Promise<TokenData> {
     loading.value = true
     error.value = null
 
     try {
-      console.log('=== OAuth Token Exchange ===')
-      console.log('Code:', code)
-      console.log('Client ID:', clientId)
-      console.log('Redirect URI:', redirectUri)
-      if (codeVerifier) console.log('Code Verifier provided')
-
       const payload: Record<string, any> = {
         grant_type: 'authorization_code',
         code,
-        client_id: clientId,
-        client_secret: clientSecret,
-        redirect_uri: redirectUri
+        client_id: OAUTH_CONFIG.clientId,
+        client_secret: OAUTH_CONFIG.clientSecret,
+        redirect_uri: OAUTH_CONFIG.redirectUri
       }
-      if (codeVerifier) {
-        payload.code_verifier = codeVerifier
-      }
+      if (codeVerifier) payload.code_verifier = codeVerifier
 
       const response = await http.post('/oidc/token', payload)
-
       const data = response.data
-      console.log('Token exchange response:', data)
 
-      // Store tokens
       token.value = data.access_token
       localStorage.setItem('token', data.access_token)
-      
-      if (data.refresh_token) {
-        console.log('Storing refresh token')
-        localStorage.setItem('refresh_token', data.refresh_token)
-      }
+      if (data.refresh_token) localStorage.setItem('refresh_token', data.refresh_token)
+      if (data.user) user.value = data.user
 
-      // Store user info from token response
-      if (data.user) {
-        console.log('Storing user info:', data.user)
-        user.value = data.user
-      }
-
-      console.log('=== OAuth Token Exchange Completed ===')
       return data
     } catch (err: any) {
       console.error('Token exchange error:', err)
@@ -335,13 +436,6 @@ export const useAuthStore = defineStore('auth', () => {
       console.error('Failed to fetch user info:', error)
       throw error
     }
-  }
-
-  // Generate random state for OAuth
-  function generateRandomState(): string {
-    const array = new Uint8Array(16)
-    crypto.getRandomValues(array)
-    return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('')
   }
 
   // --- Advanced Flows ---
@@ -460,13 +554,16 @@ export const useAuthStore = defineStore('auth', () => {
     isInitialized,
     isAuthenticated,
     login,
+    mfaChallenge,
+    mfaVerify,
     register,
     checkAuth,
     logout,
     refreshAccessToken,
     getSessions,
     revokeSession,
-    startOAuthFlow,
+    beginOAuthLogin,
+    consumeOAuthState,
     exchangeCodeForToken,
     fetchUserInfo,
     setupOTP,

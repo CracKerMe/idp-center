@@ -1,0 +1,93 @@
+image:
+  repository: idp-center
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+# Requires phase 4.2 (Redis shared cache) and 4.3 (PG-advisory-lock leader election) to
+# already be in place before raising this — see implementation plan §4.4 precondition.
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 5986
+
+ingress:
+  enabled: true
+  className: nginx
+  host: idp.example.com
+  tls:
+    enabled: true
+    secretName: idp-center-tls
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 8
+  targetCPUUtilizationPercentage: 70
+  # Custom metric requires the prometheus-adapter to expose idp_http_requests_total
+  # (server/utils/metrics.ts) as a Kubernetes custom metric; left disabled by default
+  # since it depends on cluster-specific adapter config.
+  targetQPS: null
+
+probes:
+  liveness:
+    path: /livez
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  readiness:
+    path: /readyz
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+# Runs `pnpm db:migrate` before the app container starts (implementation plan §4.1/§4.4 —
+# migrations must be applied out-of-band, never via drizzle-kit push from every replica).
+migration:
+  enabled: true
+
+env:
+  NODE_ENV: production
+  PORT: "5986"
+
+# Non-secret config that's still fine in a ConfigMap (endpoints, feature flags, tuning).
+configMap:
+  APP_VERSION: "1.0.0"
+  RISK_ENGINE_MODE: "shadow"
+  OAUTH_ENFORCE_GRANT_TYPES: "true"
+  PG_POOL_MAX: "10"
+  PG_IDLE_TIMEOUT_SEC: "30"
+
+# Values here are placeholders — inject real secrets via `--set-string` at install time, an
+# external-secrets operator, or a pre-created Secret referenced by secret.existingSecret.
+secret:
+  existingSecret: ""
+  values:
+    JWT_SECRET: "changeme-min-32-chars-changeme-min-32"
+    ENCRYPTION_KEY: "changeme-min-32-chars-changeme-min-32"
+    DATABASE_URL: "postgres://postgres:postgres@postgres:5432/idp_center"
+    REDIS_URL: "redis://redis:6379"
+    SMTP_HOST: ""
+    SMTP_PORT: "587"
+    SMTP_USER: ""
+    SMTP_PASS: ""
+    SMTP_FROM: ""
+    ANTHROPIC_API_KEY: ""
+
+serviceAccount:
+  create: true
+  name: ""

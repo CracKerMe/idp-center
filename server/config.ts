@@ -40,6 +40,26 @@ const EnvSchema = z.object({
   // Metrics & Observability
   METRICS_TOKEN: z.string().optional(),  // Bearer token for /metrics endpoint; if empty, only private IPs allowed
   APP_VERSION: z.string().default('1.0.0'),
+
+  // Phase 3: risk engine (adaptive auth). 'off' skips scoring entirely; 'shadow' scores and
+  // records but never blocks/challenges a login; 'enforce' applies risk_policies actions.
+  // Always start a rollout in 'shadow' for ~2 weeks per the implementation plan.
+  RISK_ENGINE_MODE: z.enum(['off', 'shadow', 'enforce']).default('off'),
+  GEOIP_DB_PATH: z.string().optional(),   // path to a local MaxMind GeoLite2-City.mmdb; unset disables geo signals
+
+  // Phase 3.3: LLM-assisted admin tooling (audit summaries, policy drafts, compliance gap
+  // checks). Entirely optional — every ai-assist endpoint 501s when this is unset.
+  ANTHROPIC_API_KEY: z.string().optional(),
+
+  // Phase 4.2: shared cache/rate-limit/leader-election backend. Unset falls back to an
+  // in-process implementation — correct on a single instance, not safe across replicas.
+  REDIS_URL: z.string().optional(),
+
+  // Phase 4.1: connection pool tuning (postgres.js). Defaults are conservative for a small
+  // single-instance deployment; raise PG_POOL_MAX per-replica when running behind PgBouncer.
+  PG_POOL_MAX: z.coerce.number().int().positive().default(10),
+  PG_IDLE_TIMEOUT_SEC: z.coerce.number().int().positive().default(30),
+  PG_CONNECT_TIMEOUT_SEC: z.coerce.number().int().positive().default(10),
 });
 
 const _env = EnvSchema.safeParse(process.env);

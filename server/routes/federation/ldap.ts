@@ -52,6 +52,7 @@ router.post('/:alias/ldap/login', validate({ body: ldapLoginSchema }), async (re
     }, {
       linkByVerifiedEmail: idp.row.linkByVerifiedEmail ?? false,
       jitProvisioning: idp.row.jitProvisioning ?? true,
+      defaultRoleIds: (idp.row.defaultRoles || '').split(',').map(s => s.trim()).filter(Boolean),
     });
   } catch (err: any) {
     await logAudit({ req, action: AuditAction.FEDERATION_LOGIN_FAILED, details: `Account linking failed: ${err.message}`, tenantId: tenantId });

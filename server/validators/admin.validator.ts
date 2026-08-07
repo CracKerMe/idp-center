@@ -139,3 +139,51 @@ export type UpdateIdpInput = z.infer<typeof updateIdpSchema>;
 export const idpIdParamsSchema = z.object({
   id: z.string().uuid(),
 });
+
+// ─── Risk policies (phase 3.1) ──────────────────────────────────────────────
+
+export const createRiskPolicySchema = z.object({
+  name: z.string().min(1).max(100),
+  enabled: z.boolean().optional(),
+  minScore: z.number().int().min(0).max(1000),
+  maxScore: z.number().int().min(0).max(1000),
+  action: z.enum(['allow', 'mfa_required', 'step_up', 'deny', 'notify']),
+}).refine((v) => v.maxScore >= v.minScore, { message: 'maxScore must be >= minScore', path: ['maxScore'] });
+
+export type CreateRiskPolicyInput = z.infer<typeof createRiskPolicySchema>;
+
+export const updateRiskPolicySchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  enabled: z.boolean().optional(),
+  minScore: z.number().int().min(0).max(1000).optional(),
+  maxScore: z.number().int().min(0).max(1000).optional(),
+  action: z.enum(['allow', 'mfa_required', 'step_up', 'deny', 'notify']).optional(),
+});
+
+export type UpdateRiskPolicyInput = z.infer<typeof updateRiskPolicySchema>;
+
+export const riskPolicyIdParamsSchema = z.object({
+  id: z.string().uuid(),
+});
+
+export const listLoginEventsQuerySchema = z.object({
+  userId: z.string().uuid().optional(),
+  outcome: z.enum(['success', 'fail', 'blocked', 'challenged']).optional(),
+  minScore: z.coerce.number().int().min(0).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+// ─── AI-assisted admin tooling (phase 3.3) ──────────────────────────────────
+
+export const aiAuditSummaryQuerySchema = z.object({
+  days: z.coerce.number().int().min(1).max(90).default(7),
+});
+
+export const aiPolicyDraftSchema = z.object({
+  instruction: z.string().min(4).max(2000),
+});
+
+export const aiComplianceCheckQuerySchema = z.object({
+  standard: z.enum(['soc2', 'gdpr']).default('soc2'),
+});

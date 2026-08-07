@@ -137,7 +137,7 @@ router.post('/:alias/saml/acs', async (req, res) => {
     }
   }
 
-  const mapping = idp.config.attributeMapping || {};
+  const mapping = idp.row.attributeMapping ? JSON.parse(idp.row.attributeMapping) : {};
   const nameId = typeof profile.nameID === 'string' ? profile.nameID : null;
   const email = mapAttribute(profile, mapping.email, 'email', 'mail', 'urn:oid:0.9.2342.19200300.100.1.3');
   const username = mapAttribute(profile, mapping.username, 'username', 'nameID') || nameId;
@@ -155,6 +155,7 @@ router.post('/:alias/saml/acs', async (req, res) => {
     }, {
       linkByVerifiedEmail: idp.row.linkByVerifiedEmail ?? false,
       jitProvisioning: idp.row.jitProvisioning ?? true,
+      defaultRoleIds: (idp.row.defaultRoles || '').split(',').map(s => s.trim()).filter(Boolean),
     });
   } catch (err: any) {
     await logAudit({ req, action: AuditAction.FEDERATION_LOGIN_FAILED, details: `Account linking failed: ${err.message}`, tenantId: tenantId });

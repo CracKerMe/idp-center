@@ -1,11 +1,20 @@
 import { and, eq } from 'drizzle-orm';
 import { db } from '../../database.js';
-import { TOKEN_CONFIG } from '../../config.js';
+import { TOKEN_CONFIG, config } from '../../config.js';
 import { refreshTokens, users, oidcSessions } from '../../schema.js';
 import { OAuthError } from '../errors.js';
 import { issueAccessToken, issueRefreshToken, issueIdToken } from '../issue.js';
 import { revokeTokensBySession, RevokeReason } from '../../utils/token-blacklist.js';
+import { assessLoginRisk } from '../../services/risk.service.js';
+import { computeDeviceFingerprint } from '../../utils/device-fingerprint.js';
+import { uebaSessionRevocations } from '../../utils/metrics.js';
+import { logger } from '../../utils/logger.js';
 import type { GrantContext, GrantHandler, TokenResponse } from '../types.js';
+
+// A session's risk score jumping by more than this between refreshes (e.g. the refresh
+// token got stolen and is now being replayed from a different network) forces
+// re-authentication rather than silently minting a fresh access token. See §3.2 UEBA.
+const SESSION_RISK_JUMP_THRESHOLD = 40;
 
 export const refreshTokenGrant: GrantHandler = {
   grantType: 'refresh_token',
@@ -85,7 +94,7 @@ export const refreshTokenGrant: GrantHandler = {
     let authTime: Date | undefined;
     if (oidcSessionId) {
       const [oidcSession] = await db
-        .select({ sid: oidcSessions.sid, amr: oidcSessions.amr, acr: oidcSessions.acr, authTime: oidcSessions.authTime })
+        .select({ sid: oidcSessions.sid, amr: oidcSessions.amr, acr: oidcSessions.acr, authTime: oidcSessions.authTime, riskScore: oidcSessions.riskScore })
         .from(oidcSessions)
         .where(eq(oidcSessions.id, oidcSessionId))
         .limit(1);
@@ -93,6 +102,26 @@ export const refreshTokenGrant: GrantHandler = {
         authCtx = { amr: oidcSession.amr, acr: oidcSession.acr };
         sid = oidcSession.sid;
         authTime = oidcSession.authTime ?? undefined;
+
+        if (config.RISK_ENGINE_MODE !== 'off') {
+          const ip = ctx.req.ip || ctx.req.socket?.remoteAddress || 'unknown';
+          const userAgent = ctx.req.get('User-Agent') || '';
+          const assessment = await assessLoginRisk({
+            userId: user.id, tenantId, clientId: client.clientId, ip, userAgent,
+            deviceFingerprint: computeDeviceFingerprint(userAgent, ip),
+          });
+
+          const jumped = oidcSession.riskScore != null && assessment.score - oidcSession.riskScore >= SESSION_RISK_JUMP_THRESHOLD;
+          if (config.RISK_ENGINE_MODE === 'enforce' && jumped) {
+            await revokeTokensBySession(oidcSessionId, RevokeReason.SECURITY_BREACH);
+            await db.update(oidcSessions).set({ terminatedAt: new Date(), riskScore: assessment.score }).where(eq(oidcSessions.id, oidcSessionId));
+            uebaSessionRevocations.inc({ tenant_id: tenantId });
+            logger.warn(`OIDC session ${oidcSessionId} revoked on refresh: risk score jumped ${oidcSession.riskScore} -> ${assessment.score}`);
+            throw new OAuthError('invalid_grant', 400, 'Session revoked due to elevated risk — please sign in again');
+          }
+
+          await db.update(oidcSessions).set({ riskScore: assessment.score }).where(eq(oidcSessions.id, oidcSessionId));
+        }
       }
     }
 

@@ -9,5 +9,16 @@
     "relPath": "idp-phase12-review/idp-phase12-review-msho3p7j-e348c2.json",
     "host": "pi",
     "packageVersion": "0.2.6"
+  },
+  {
+    "runId": "idp-fix-all-seams-msi9n1cu-d1014b",
+    "flowName": "idp-fix-all-seams",
+    "cwd": "/Users/promisex/Desktop/其他项目/idp-center",
+    "status": "failed",
+    "createdAt": 1786066098078,
+    "updatedAt": 1786066099686,
+    "relPath": "idp-fix-all-seams/idp-fix-all-seams-msi9n1cu-d1014b.json",
+    "host": "pi",
+    "packageVersion": "0.2.6"
   }
 ]

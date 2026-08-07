@@ -1,6 +1,7 @@
 import express from 'express';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
+import { config } from '../config.js';
 import { db } from '../database.js';
 import { logAudit, computeAuditHash } from '../utils/audit.js';
 import { AuditAction, PRIVILEGED_ACTIONS, ANOMALY_ACTIONS } from '../utils/audit-actions.js';
@@ -63,7 +64,17 @@ import {
   createIdpSchema,
   updateIdpSchema,
   idpIdParamsSchema,
+  createRiskPolicySchema,
+  updateRiskPolicySchema,
+  riskPolicyIdParamsSchema,
+  listLoginEventsQuerySchema,
+  aiAuditSummaryQuerySchema,
+  aiPolicyDraftSchema,
+  aiComplianceCheckQuerySchema,
 } from '../validators/admin.validator.js';
+import { riskPolicies, loginEvents, userBehaviorBaselines } from '../schema.js';
+import { runUebaBaselineJob } from '../jobs/ueba.job.js';
+import { isAiAssistEnabled, generateAuditSummary, draftRiskPolicy, generateComplianceGapCheck, AiAssistDisabledError } from '../services/ai-assist.service.js';
 
 const router = express.Router();
 
@@ -993,6 +1004,166 @@ router.delete('/idps/:id', authenticateAdmin, validate({ params: idpIdParamsSche
   await db.delete(identityProviders).where(eq(identityProviders.id, req.params.id));
   await logAudit({ req, action: AuditAction.IDP_DELETED, userId: req.user!.id, details: JSON.stringify({ id: req.params.id }), tenantId: req.tenantId });
   res.json(message('Identity provider deleted'));
+});
+
+// ─── Risk engine (phase 3.1/3.2) ────────────────────────────────────────────
+
+// GET /api/admin/risk/policies
+router.get('/risk/policies', authenticateAdmin, async (req, res) => {
+  const rows = await db.select().from(riskPolicies).where(eq(riskPolicies.tenantId, req.tenantId)).orderBy(asc(riskPolicies.minScore));
+  res.json(success(rows));
+});
+
+// POST /api/admin/risk/policies
+router.post('/risk/policies', authenticateAdmin, validate({ body: createRiskPolicySchema }), async (req, res) => {
+  const { name, enabled, minScore, maxScore, action } = req.body;
+  const id = crypto.randomUUID();
+  await db.insert(riskPolicies).values({ id, tenantId: req.tenantId, name, enabled: enabled ?? true, minScore, maxScore, action });
+  await logAudit({ req, action: AuditAction.RISK_POLICY_CREATED, userId: req.user!.id, details: JSON.stringify({ id, name, minScore, maxScore, action }), tenantId: req.tenantId });
+  res.status(201).json(success({ id }, 'Risk policy created'));
+});
+
+// PUT /api/admin/risk/policies/:id
+router.put('/risk/policies/:id', authenticateAdmin, validate({ params: riskPolicyIdParamsSchema, body: updateRiskPolicySchema }), async (req, res) => {
+  const [existing] = await db.select({ id: riskPolicies.id }).from(riskPolicies).where(and(eq(riskPolicies.id, req.params.id), eq(riskPolicies.tenantId, req.tenantId))).limit(1);
+  if (!existing) return res.status(404).json(error('Risk policy not found', ErrorCode.RESOURCE_NOT_FOUND));
+
+  const { name, enabled, minScore, maxScore, action } = req.body;
+  const updateData: Record<string, any> = { updatedAt: new Date() };
+  if (name !== undefined) updateData.name = name;
+  if (enabled !== undefined) updateData.enabled = enabled;
+  if (minScore !== undefined) updateData.minScore = minScore;
+  if (maxScore !== undefined) updateData.maxScore = maxScore;
+  if (action !== undefined) updateData.action = action;
+
+  await db.update(riskPolicies).set(updateData).where(eq(riskPolicies.id, req.params.id));
+  await logAudit({ req, action: AuditAction.RISK_POLICY_UPDATED, userId: req.user!.id, details: JSON.stringify({ id: req.params.id, ...updateData }), tenantId: req.tenantId });
+  res.json(message('Risk policy updated'));
+});
+
+// DELETE /api/admin/risk/policies/:id
+router.delete('/risk/policies/:id', authenticateAdmin, validate({ params: riskPolicyIdParamsSchema }), async (req, res) => {
+  const [existing] = await db.select({ id: riskPolicies.id }).from(riskPolicies).where(and(eq(riskPolicies.id, req.params.id), eq(riskPolicies.tenantId, req.tenantId))).limit(1);
+  if (!existing) return res.status(404).json(error('Risk policy not found', ErrorCode.RESOURCE_NOT_FOUND));
+
+  await db.delete(riskPolicies).where(eq(riskPolicies.id, req.params.id));
+  await logAudit({ req, action: AuditAction.RISK_POLICY_DELETED, userId: req.user!.id, details: JSON.stringify({ id: req.params.id }), tenantId: req.tenantId });
+  res.json(message('Risk policy deleted'));
+});
+
+// GET /api/admin/risk/events — recent login_events for this tenant, most recent first.
+router.get('/risk/events', authenticateAdmin, validate({ query: listLoginEventsQuerySchema }), async (req, res) => {
+  const { userId, outcome, minScore, limit, offset } = req.query as any;
+  const conditions = [eq(loginEvents.tenantId, req.tenantId)];
+  if (userId) conditions.push(eq(loginEvents.userId, userId));
+  if (outcome) conditions.push(eq(loginEvents.outcome, outcome));
+  if (minScore !== undefined) conditions.push(gte(loginEvents.riskScore, minScore));
+
+  const [rows, [{ total }]] = await Promise.all([
+    db.select().from(loginEvents).where(and(...conditions)).orderBy(desc(loginEvents.createdAt)).limit(limit).offset(offset),
+    db.select({ total: count() }).from(loginEvents).where(and(...conditions)),
+  ]);
+
+  const page = Math.floor(offset / limit) + 1;
+  res.json(paginated(rows.map((r) => ({ ...r, riskReasons: r.riskReasons ? JSON.parse(r.riskReasons) : [] })), Number(total), page, limit));
+});
+
+// GET /api/admin/risk/dashboard — summary stats backing src/pages/admin/RiskDashboard.tsx
+router.get('/risk/dashboard', authenticateAdmin, async (req, res) => {
+  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const tenantId = req.tenantId;
+
+  const [outcomeCounts, topUsers, signalRows] = await Promise.all([
+    db.select({ outcome: loginEvents.outcome, n: count() }).from(loginEvents)
+      .where(and(eq(loginEvents.tenantId, tenantId), gte(loginEvents.createdAt, since)))
+      .groupBy(loginEvents.outcome),
+    db.select({ userId: loginEvents.userId, avgScore: sql<number>`avg(${loginEvents.riskScore})::int`, n: count() })
+      .from(loginEvents)
+      .where(and(eq(loginEvents.tenantId, tenantId), gte(loginEvents.createdAt, since), sql`${loginEvents.riskScore} is not null`))
+      .groupBy(loginEvents.userId)
+      .orderBy(desc(sql`avg(${loginEvents.riskScore})`))
+      .limit(10),
+    db.select({ riskReasons: loginEvents.riskReasons }).from(loginEvents)
+      .where(and(eq(loginEvents.tenantId, tenantId), gte(loginEvents.createdAt, since), sql`${loginEvents.riskReasons} is not null`))
+      .limit(2000),
+  ]);
+
+  const signalCounts: Record<string, number> = {};
+  for (const row of signalRows) {
+    try {
+      const signals = JSON.parse(row.riskReasons || '[]');
+      for (const s of signals) signalCounts[s.code] = (signalCounts[s.code] || 0) + 1;
+    } catch { /* malformed row, skip */ }
+  }
+
+  res.json(success({
+    mode: config.RISK_ENGINE_MODE,
+    outcomes: Object.fromEntries(outcomeCounts.map((r) => [r.outcome, r.n])),
+    topRiskyUsers: topUsers,
+    signalDistribution: signalCounts,
+  }));
+});
+
+// POST /api/admin/risk/ueba/run — manually trigger the UEBA baseline recompute
+// (server/jobs/ueba.job.ts normally runs nightly via the scheduler in server/jobs/scheduler.ts).
+router.post('/risk/ueba/run', authenticatePlatformAdmin, async (req, res) => {
+  const result = await runUebaBaselineJob();
+  res.json(success(result, 'UEBA baseline recompute finished'));
+});
+
+// ─── LLM-assisted admin tooling (phase 3.3) ─────────────────────────────────
+// Every endpoint here 501s when ANTHROPIC_API_KEY is unset. None of them write anything
+// that takes effect on its own — drafts are returned for the admin to review and apply
+// through the ordinary CRUD endpoints (see risk/policies above).
+
+function requireAiAssist(res: express.Response): boolean {
+  if (!isAiAssistEnabled()) {
+    res.status(501).json(error('AI-assisted tooling is disabled (ANTHROPIC_API_KEY not set)', ErrorCode.SERVER_ERROR));
+    return false;
+  }
+  return true;
+}
+
+// GET /api/admin/ai/audit-summary?days=7
+router.get('/ai/audit-summary', authenticateAdmin, validate({ query: aiAuditSummaryQuerySchema }), async (req, res) => {
+  if (!requireAiAssist(res)) return;
+  try {
+    const { days } = req.query as any;
+    const result = await generateAuditSummary(req.tenantId, days);
+    await logAudit({ req, action: AuditAction.AI_AUDIT_SUMMARY_GENERATED, userId: req.user!.id, details: `days=${days}`, tenantId: req.tenantId });
+    res.json(success(result));
+  } catch (err: any) {
+    if (err instanceof AiAssistDisabledError) return res.status(501).json(error(err.message, ErrorCode.SERVER_ERROR));
+    res.status(502).json(error(`AI assist failed: ${err.message}`, ErrorCode.SERVER_ERROR));
+  }
+});
+
+// POST /api/admin/ai/policy-draft — returns a draft only; POST /api/admin/risk/policies
+// applies it after human review.
+router.post('/ai/policy-draft', authenticateAdmin, validate({ body: aiPolicyDraftSchema }), async (req, res) => {
+  if (!requireAiAssist(res)) return;
+  try {
+    const draft = await draftRiskPolicy(req.body.instruction);
+    await logAudit({ req, action: AuditAction.AI_POLICY_DRAFT_GENERATED, userId: req.user!.id, details: JSON.stringify(draft), tenantId: req.tenantId });
+    res.json(success(draft, 'Draft generated — review and apply via POST /api/admin/risk/policies'));
+  } catch (err: any) {
+    if (err instanceof AiAssistDisabledError) return res.status(501).json(error(err.message, ErrorCode.SERVER_ERROR));
+    res.status(502).json(error(`AI assist failed: ${err.message}`, ErrorCode.SERVER_ERROR));
+  }
+});
+
+// GET /api/admin/ai/compliance-check?standard=soc2|gdpr
+router.get('/ai/compliance-check', authenticateAdmin, validate({ query: aiComplianceCheckQuerySchema }), async (req, res) => {
+  if (!requireAiAssist(res)) return;
+  try {
+    const { standard } = req.query as any;
+    const result = await generateComplianceGapCheck(req.tenantId, standard);
+    await logAudit({ req, action: AuditAction.AI_COMPLIANCE_CHECK_GENERATED, userId: req.user!.id, details: `standard=${standard}`, tenantId: req.tenantId });
+    res.json(success(result));
+  } catch (err: any) {
+    if (err instanceof AiAssistDisabledError) return res.status(501).json(error(err.message, ErrorCode.SERVER_ERROR));
+    res.status(502).json(error(`AI assist failed: ${err.message}`, ErrorCode.SERVER_ERROR));
+  }
 });
 
 export default router;

@@ -149,7 +149,7 @@ export default function AuditLogs() {
             ) : logs.map((log) => (
               <tr key={log.id}>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-zinc-500 dark:text-zinc-400">
-                  {format(new Date(log.created_at), 'MMM d, yyyy HH:mm:ss')}
+                  {log.createdAt ? format(new Date(log.createdAt), 'MMM d, yyyy HH:mm:ss') : '-'}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-zinc-900 dark:text-white">
                   <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
@@ -161,10 +161,10 @@ export default function AuditLogs() {
                   </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-zinc-500 dark:text-zinc-400">
-                  {log.username || log.user_id || 'System/Anonymous'}
+                  {log.username || log.userId || 'System/Anonymous'}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-xs text-zinc-500 dark:text-zinc-400 font-mono">
-                  {log.ip_address}
+                  {log.ipAddress}
                 </td>
                 <td className="px-6 py-4 text-sm text-zinc-500 dark:text-zinc-400">{log.details}</td>
               </tr>
