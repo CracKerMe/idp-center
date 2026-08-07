@@ -10,6 +10,7 @@ import { signAccessToken } from '../../oauth/jwt.js';
 import { RiskAssessment, recordLoginEvent } from '../../services/risk.service.js';
 import { logger } from '../../utils/logger.js';
 import { users, accessTokens, refreshTokens, sessions, trustedDevices } from '../../schema.js';
+import { eventBus } from '../../services/event-bus.service.js';
 import { eq, and } from 'drizzle-orm';
 
 export type UserRow = typeof users.$inferSelect;
@@ -117,6 +118,17 @@ export async function completeLogin(user: UserRow, req: express.Request, opts: {
     userId: user.id, tenantId, outcome: 'success', ip, userAgent,
     deviceFingerprint: opts.deviceFingerprint, authMethods: opts.amr, assessment: opts.riskAssessment,
   }).catch((err) => logger.warn(`recordLoginEvent failed: ${err.message}`));
+
+  // Emit real-time event for event bus consumers
+  eventBus.emit({
+    id: crypto.randomUUID(),
+    type: 'auth.login.success',
+    tenantId,
+    userId: user.id,
+    timestamp: new Date(),
+    payload: { method: opts.amr.join(','), sessionId, riskScore: opts.riskAssessment?.score },
+    metadata: { ip, userAgent, requestId: (req as any).requestId },
+  }).catch((err: any) => logger.warn(`EventBus emit failed: ${err.message}`));
 
   return success({
     access_token: accessToken,

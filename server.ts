@@ -17,6 +17,11 @@ import mfaRouter from './server/routes/mfa.js';
 import scimRouter from './server/routes/scim.js';
 import federationRouter from './server/routes/federation/index.js';
 import healthRouter from './server/routes/health.js';
+import eventsRouter from './server/routes/events.js';
+import operationsRouter from './server/routes/operations.js';
+import { eventBus } from './server/services/event-bus.service.js';
+import { registerAlertRules } from './server/services/alert.service.js';
+import { logger } from './server/utils/logger.js';
 import { sql } from 'drizzle-orm';
 
 import { tenantContext } from './server/middleware/tenant.js';
@@ -85,6 +90,10 @@ app.use('/.well-known', wellKnownRouter);
 // outside /api so it doesn't go through tenantContext's header-based resolution.
 app.use('/scim/v2', express.json({ type: ['application/json', 'application/scim+json'] }), scimRouter);
 
+// Events & Operations
+app.use('/api/events', eventsRouter);
+app.use('/api/ops', operationsRouter);
+
 export async function startServer() {
   await initDatabase();
 
@@ -106,10 +115,24 @@ export async function startServer() {
     });
   }
 
+  // Initialize event bus and register alert rules
+  await eventBus.init();
+  registerAlertRules();
+  eventBus.startConsumer().catch((err: any) => logger.warn(`EventBus consumer failed: ${err.message}`));
+
   const server = app.listen(config.PORT, '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${config.PORT}`);
     startScheduler();
   });
+
+  // Graceful shutdown: stop consumer and flush Redis before exit
+  const shutdown = async () => {
+    logger.info('Shutting down...');
+    await eventBus.stopConsumer();
+    server.close();
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
 
   return server;
 }

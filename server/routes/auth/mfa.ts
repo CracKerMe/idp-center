@@ -17,6 +17,8 @@ import { users, mfaFactors } from '../../schema.js';
 import { eq, and, desc } from 'drizzle-orm';
 import { otpVerifySchema } from '../../validators/auth.validator.js';
 import { completeLogin, AMR_BY_FACTOR_TYPE } from './common.js';
+import { eventBus } from '../../services/event-bus.service.js';
+import { logger } from '../../utils/logger.js';
 
 const router = express.Router();
 
@@ -116,6 +118,18 @@ router.post('/mfa/verify', validate({ body: mfaVerifySchema }), async (req, res)
   if (!verified || !amrMethod) {
     await logAudit({ req, action: AuditAction.LOGIN_FAILED_MFA, userId: user.id, details: 'MFA verification failed', tenantId: tenantId });
     mfaVerify.inc({ type: factor_id ? 'factor' : 'recovery', outcome: 'fail', tenant_id: tenantId });
+
+    // Emit real-time event for alert rules
+    eventBus.emit({
+      id: crypto.randomUUID(),
+      type: 'mfa.verify.fail',
+      tenantId,
+      userId: user.id,
+      timestamp: new Date(),
+      payload: { factorType: factor_id ? 'factor' : 'recovery' },
+      metadata: { ip: req.ip, userAgent: req.get('User-Agent') || '', requestId: (req as any).requestId },
+    }).catch((err: any) => logger.warn(`EventBus emit mfa.verify.fail failed: ${err.message}`));
+
     return res.status(401).json(error('Invalid MFA verification', ErrorCode.AUTH_OTP_INVALID));
   }
 

@@ -111,7 +111,7 @@ async function initCache(): Promise<CacheService> {
   if (!config.REDIS_URL) return memoryFallback;
 
   try {
-    const { default: IORedis } = await import('ioredis');
+    const IORedis = (await import('ioredis')).default as any;
     const redis = new IORedis(config.REDIS_URL, { maxRetriesPerRequest: 2, lazyConnect: false });
     redis.on('error', (err: Error) => logger.warn(`Redis error: ${err.message}`));
     return new RedisCache(redis);

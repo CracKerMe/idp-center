@@ -2,6 +2,10 @@ import 'dotenv/config';
 import { z } from 'zod';
 import path from 'path';
 
+/** Explicit boolean parser: only 1/true/yes/on (case-insensitive) are true */
+const envBool = (def: boolean) =>
+  z.string().optional().transform(v => v === undefined ? def : /^(1|true|yes|on)$/i.test(v));
+
 const EnvSchema = z.object({
   JWT_SECRET: z.string().min(32, 'JWT_SECRET 至少需要 32 个字符'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
@@ -23,7 +27,7 @@ const EnvSchema = z.object({
   PG_PASSWORD: z.string().default(''),
   PG_DATABASE: z.string().default('idp_center'),
   JWT_EXPIRES_IN: z.string().default('1h'),
-  OAUTH_ENFORCE_GRANT_TYPES: z.coerce.boolean().default(false),
+  OAUTH_ENFORCE_GRANT_TYPES: envBool(false),
 
   // First-run seed for the demo `default-client` (server/database.ts). Comma-separated.
   // Admins can add/remove redirect URIs afterwards via /api/admin/clients — these only seed
@@ -66,6 +70,34 @@ const EnvSchema = z.object({
   // Phase 4.2: shared cache/rate-limit/leader-election backend. Unset falls back to an
   // in-process implementation — correct on a single instance, not safe across replicas.
   REDIS_URL: z.string().optional(),
+
+  // ── Event Bus Configuration (Phase 2) ────────────────────────────────────────
+  // TODO(EVENT_STORE_ENABLED): reserved for event-sourcing persistence; not wired yet.
+  EVENT_STORE_ENABLED: envBool(false),
+  EVENT_STREAM_MAXLEN: z.coerce.number().int().positive().default(100_000),
+  EVENT_STREAM_KEY: z.string().default('idp:events'),
+  EVENT_CONSUMER_GROUP: z.string().default('idp-workers'),
+
+  // ── Alert Configuration ─────────────────────────────────────────────────────
+  // TODO(ALERT_WEBHOOK_URL): reserved for webhook alert delivery; not wired yet.
+  ALERT_WEBHOOK_URL: z.string().url().optional(),
+  // TODO(ALERT_AI_ENRICHMENT): reserved for LLM-assisted alert enrichment; not wired yet.
+  ALERT_AI_ENRICHMENT: envBool(false),
+  ALERT_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(10),
+
+  // ── Auto-Heal Configuration (Phase 6) ───────────────────────────────────────
+  AUTO_HEAL_ENABLED: envBool(true),
+  AUTO_HEAL_TICK_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
+
+  // ── Health Check Configuration ──────────────────────────────────────────────
+  // TODO(HEALTH_CHECK_INTERVAL_MS): scheduler uses AUTO_HEAL_TICK_INTERVAL_MS instead;
+  // this config is defined but never read. Remove or consolidate when cleaning up.
+  HEALTH_CHECK_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
+  HEALTH_HISTORY_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
+
+  // ── Capacity Forecast Configuration (Phase 6) ──────────────────────────────
+  // TODO(CAPACITY_FORECAST_ENABLED): reserved for capacity forecasting; not wired yet.
+  CAPACITY_FORECAST_ENABLED: envBool(false),
 
   // Phase 4.1: connection pool tuning (postgres.js). Defaults are conservative for a small
   // single-instance deployment; raise PG_POOL_MAX per-replica when running behind PgBouncer.

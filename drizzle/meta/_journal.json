@@ -8,6 +8,13 @@
       "when": 1786033180445,
       "tag": "0000_military_wrecking_crew",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1786121887852,
+      "tag": "0001_alerts_health_autoheal",
+      "breakpoints": true
     }
   ]
 }

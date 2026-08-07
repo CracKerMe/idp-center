@@ -76,6 +76,19 @@ export async function authenticateToken(
 }
 
 /**
+ * Check whether a user has admin privileges (platform admin, legacy admin flag,
+ * or an 'admin:*' permission grant via roles/groups). Always reads from DB so
+ * demotions take effect immediately.
+ *
+ * Shared by authenticateAdmin and the SSE endpoint to keep admin gating consistent.
+ */
+export async function isUserAdmin(userId: string, tenantId: string): Promise<boolean> {
+  const [dbUser] = await db.select({ isAdmin: users.isAdmin, isPlatformAdmin: users.isPlatformAdmin }).from(users).where(eq(users.id, userId)).limit(1);
+  if (dbUser?.isPlatformAdmin || dbUser?.isAdmin) return true;
+  return userHasPermission(userId, tenantId, 'admin:*');
+}
+
+/**
  * Tenant-scoped admin check. `is_admin` (legacy) and `is_platform_admin` both short-circuit;
  * everyone else needs an 'admin:*' permission grant scoped to req.tenantId via roles/groups.
  * Always re-reads from the DB rather than trusting the JWT's `is_admin` claim, so a demoted
@@ -88,13 +101,11 @@ export async function authenticateAdmin(
 ) {
   authenticateToken(req, res, async () => {
     try {
-      const [dbUser] = await db.select({ isAdmin: users.isAdmin, isPlatformAdmin: users.isPlatformAdmin }).from(users).where(eq(users.id, req.user!.id)).limit(1);
+      const [dbUser] = await db.select({ isPlatformAdmin: users.isPlatformAdmin }).from(users).where(eq(users.id, req.user!.id)).limit(1);
       req.isPlatformAdmin = dbUser?.isPlatformAdmin ?? false;
-      if (dbUser?.isPlatformAdmin || dbUser?.isAdmin) return next();
 
       const tenantId = req.tenantId || req.user!.tenant_id || 'default';
-      const allowed = await userHasPermission(req.user!.id, tenantId, 'admin:*');
-      if (allowed) return next();
+      if (await isUserAdmin(req.user!.id, tenantId)) return next();
 
       return res.status(403).json(error('Admin access required', ErrorCode.AUTH_UNAUTHORIZED));
     } catch (err) {

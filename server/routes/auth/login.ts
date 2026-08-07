@@ -12,6 +12,7 @@ import { validate } from '../../middleware/validate.js';
 import { error, ErrorCode } from '../../utils/response.js';
 import { loginAttempts } from '../../utils/metrics.js';
 import { assessLoginRisk, recordLoginEvent } from '../../services/risk.service.js';
+import { eventBus } from '../../services/event-bus.service.js';
 import { logger } from '../../utils/logger.js';
 import { computeDeviceFingerprint } from '../../utils/device-fingerprint.js';
 import { rateLimit } from '../../middleware/rate-limit.js';
@@ -74,10 +75,24 @@ router.post('/login', loginRateLimit, validate({ body: loginSchema }), captchaGu
     }
     await logAudit({ req, action: AuditAction.LOGIN_FAILED, userId: user.id, details: `Failed login for ${username}`, tenantId: tenantId });
     loginAttempts.inc({ outcome: 'fail', method: 'password', tenant_id: tenantId });
+    const failIp = req.ip || req.connection.remoteAddress || 'unknown';
+    const failUa = req.get('User-Agent') || '';
     recordLoginEvent({
       userId: user.id, tenantId, outcome: 'fail',
-      ip: req.ip || req.connection.remoteAddress || 'unknown', userAgent: req.get('User-Agent') || '',
+      ip: failIp, userAgent: failUa,
     }).catch((err) => logger.warn(`recordLoginEvent failed: ${err.message}`));
+
+    // Emit real-time event
+    eventBus.emit({
+      id: crypto.randomUUID(),
+      type: 'auth.login.fail',
+      tenantId,
+      userId: user.id,
+      timestamp: new Date(),
+      payload: { reason: 'invalid_password', username },
+      metadata: { ip: failIp, userAgent: failUa, requestId: (req as any).requestId },
+    }).catch((err: any) => logger.warn(`EventBus emit failed: ${err.message}`));
+
     if (config.CAPTCHA_MODE !== 'off') {
       recordLoginFailure(captchaIdentity).catch((err) => logger.warn(`recordLoginFailure failed: ${err.message}`));
     }
@@ -140,6 +155,29 @@ router.post('/login', loginRateLimit, validate({ body: loginSchema }), captchaGu
     loginAttempts.inc({ outcome: 'blocked', method: 'password', tenant_id: tenantId });
     recordLoginEvent({ userId: user.id, tenantId, outcome: 'blocked', ip, userAgent, deviceFingerprint, assessment: riskAssessment })
       .catch((err) => logger.warn(`recordLoginEvent failed: ${err.message}`));
+
+    // Emit real-time event
+    eventBus.emit({
+      id: crypto.randomUUID(),
+      type: 'auth.login.blocked',
+      tenantId,
+      userId: user.id,
+      timestamp: new Date(),
+      payload: { reason: 'risk_denied', score: riskAssessment.score, signals: riskAssessment.signals.map(s => s.code) },
+      metadata: { ip, userAgent, requestId: (req as any).requestId },
+    }).catch((err: any) => logger.warn(`EventBus emit failed: ${err.message}`));
+
+    // Emit risk alert for alert rules
+    eventBus.emit({
+      id: crypto.randomUUID(),
+      type: 'risk.alert.triggered',
+      tenantId,
+      userId: user.id,
+      timestamp: new Date(),
+      payload: { score: riskAssessment.score, action: riskAssessment.action, signals: riskAssessment.signals.map(s => s.code), reason: 'login_denied' },
+      metadata: { ip, userAgent, requestId: (req as any).requestId },
+    }).catch((err: any) => logger.warn(`EventBus emit risk.alert.triggered failed: ${err.message}`));
+
     return res.status(403).json(error('Login blocked by risk policy', ErrorCode.AUTH_RISK_DENIED));
   }
 

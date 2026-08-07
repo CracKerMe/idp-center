@@ -7,3 +7,4 @@ export * from './rbac.js';
 export * from './federation.js';
 export * from './risk.js';
 export * from './account.js';
+export * from './events.js';

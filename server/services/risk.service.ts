@@ -6,6 +6,7 @@ import { config } from '../config.js';
 import { lookupGeo, haversineKm } from './geoip.service.js';
 import { logger } from '../utils/logger.js';
 import { riskAssessments, riskScoreHistogram } from '../utils/metrics.js';
+import { eventBus } from './event-bus.service.js';
 
 export interface RiskSignal {
   code: string;
@@ -171,6 +172,17 @@ export async function assessLoginRisk(input: AssessLoginRiskInput): Promise<Risk
 
   riskScoreHistogram.observe({ tenant_id: input.tenantId }, score);
   riskAssessments.inc({ action, mode: config.RISK_ENGINE_MODE, tenant_id: input.tenantId });
+
+  // Emit risk scored event for real-time consumers
+  eventBus.emit({
+    id: crypto.randomUUID(),
+    type: 'risk.scored',
+    tenantId: input.tenantId,
+    userId: input.userId,
+    timestamp: new Date(),
+    payload: { score, action, signals: signals.map(s => s.code), isNewDevice, isNewCountry },
+    metadata: { ip: input.ip, userAgent: input.userAgent },
+  }).catch((err: any) => logger.warn(`EventBus emit risk.scored failed: ${err.message}`));
 
   return { score, signals, action, isNewDevice, isNewCountry, impossibleTravelKmh, country: geo.country, asn: geo.asn };
 }

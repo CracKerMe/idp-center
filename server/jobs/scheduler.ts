@@ -2,6 +2,9 @@ import { sql } from 'drizzle-orm';
 import { db } from '../database.js';
 import { cleanupExpiredTokens } from '../utils/cleanup.js';
 import { runUebaBaselineJob } from './ueba.job.js';
+import { autoHealTick } from '../services/auto-heal.service.js';
+import { cleanupHealthHistory } from '../services/health-checker.service.js';
+import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 
 interface ScheduledJob {
@@ -19,6 +22,10 @@ const JOBS: ScheduledJob[] = [
   // UEBA baseline recompute (implementation plan §3.2) — nightly full pass; risk.service.ts's
   // updateBaseline() keeps baselines fresh incrementally between runs.
   { name: 'ueba-baseline', lockId: 726420002, intervalMs: 24 * 60 * 60 * 1000, run: runUebaBaselineJob },
+  // Auto-heal health check and remediation
+  { name: 'auto-heal', lockId: 726420003, intervalMs: config.AUTO_HEAL_TICK_INTERVAL_MS, run: autoHealTick },
+  // Health history retention cleanup
+  { name: 'health-history-cleanup', lockId: 726420004, intervalMs: 24 * 60 * 60 * 1000, run: cleanupHealthHistory },
 ];
 
 /**
