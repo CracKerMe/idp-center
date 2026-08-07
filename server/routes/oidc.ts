@@ -4,11 +4,10 @@ import { db } from '../database.js';
 import { config } from '../config.js';
 import { logAudit } from '../utils/audit.js';
 import { AuditAction } from '../utils/audit-actions.js';
-import { generateOAuthState } from '../services/crypto.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { success, error, ErrorCode } from '../utils/response.js';
-import { clients, authCodes, accessTokens, users, oauthStates, deviceCodes, oidcSessions, sessions } from '../schema.js';
-import { eq, and, lt, gt, isNull } from 'drizzle-orm';
+import { clients, authCodes, accessTokens, users, deviceCodes, oidcSessions, sessions } from '../schema.js';
+import { eq, and, gt, isNull } from 'drizzle-orm';
 import { grantRegistry } from '../oauth/registry.js';
 import { authenticateClient, parseList } from '../oauth/client-auth.js';
 import { OAuthError, sendOAuthError } from '../oauth/errors.js';
@@ -105,7 +104,7 @@ router.get('/authorize', async (req, res) => {
 
 // POST /api/oidc/authorize
 router.post('/authorize', authenticateToken, async (req, res) => {
-  const { client_id, acr_values, max_age } = req.body;
+  const { client_id, acr_values, max_age, state } = req.body;
   let { redirect_uri, response_type, nonce, scope, code_challenge, code_challenge_method } = req.body;
   const userId = req.user!.id;
   const tenantId = req.tenantId;
@@ -147,14 +146,6 @@ router.post('/authorize', authenticateToken, async (req, res) => {
   if (code_challenge && !SUPPORTED_CODE_CHALLENGE_METHODS.has(challengeMethod)) {
     return res.status(400).json(error('Unsupported code_challenge_method', ErrorCode.VALIDATION_ERROR));
   }
-
-  // Generate server-side state for CSRF protection (ignore client-provided state)
-  if (Math.random() < 0.1) {
-    await db.delete(oauthStates).where(lt(oauthStates.expiresAt, new Date()));
-  }
-  const state = generateOAuthState();
-  const stateExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
-  await db.insert(oauthStates).values({ state, expiresAt: stateExpiresAt });
 
   const code = crypto.randomBytes(16).toString('hex');
   const expiresAt = new Date(Date.now() + 10 * 60000);
@@ -211,7 +202,7 @@ router.post('/authorize', authenticateToken, async (req, res) => {
 
   const redirectUrl = new URL(redirect_uri as string);
   redirectUrl.searchParams.append('code', code);
-  redirectUrl.searchParams.append('state', state);
+  if (typeof state === 'string' && state) redirectUrl.searchParams.append('state', state);
 
   res.json(success({ redirect_url: redirectUrl.toString() }));
 });
@@ -384,10 +375,10 @@ router.post('/device_authorization', deviceAuthRateLimit, async (req, res) => {
     res.json({
       device_code: deviceCode,
       user_code: formattedCode,
-      // The frontend is a hash-routed SPA (createHashHistory) — the fragment never
-      // reaches the server, so /#/device is resolved client-side, not redirected here.
-      verification_uri: `${issuer}/#/device`,
-      verification_uri_complete: `${issuer}/#/device?user_code=${encodeURIComponent(formattedCode)}`,
+      // The frontend is a history-routed SPA (createBrowserHistory) — the server
+      // has a catch-all fallback to index.html, so /device is resolved client-side.
+      verification_uri: `${issuer}/device`,
+      verification_uri_complete: `${issuer}/device?user_code=${encodeURIComponent(formattedCode)}`,
       expires_in: 600,
       interval: 5,
     });
@@ -454,7 +445,7 @@ router.post('/device/deny', authenticateToken, async (req, res) => {
 });
 
 // GET|POST /api/oidc/end_session — RP-initiated logout (OpenID Connect RP-Initiated Logout 1.0).
-// Always redirects to the hash-routed confirmation page; the id_token_hint's signature is the
+// Always redirects to the history-routed confirmation page; the id_token_hint's signature is the
 // only thing that authorizes acting on its sid/aud, and it's expected to be expired by now.
 router.all('/end_session', async (req, res) => {
   const params: Record<string, unknown> = req.method === 'GET' ? req.query : req.body;
@@ -492,7 +483,7 @@ router.all('/end_session', async (req, res) => {
     }
   }
 
-  const target = new URL(`${config.APP_URL}/#/logout`);
+  const target = new URL(`${config.APP_URL}/logout`);
   if (sid) target.searchParams.set('sid', sid);
   if (clientId) target.searchParams.set('client_id', clientId);
   if (validatedRedirect) target.searchParams.set('post_logout_redirect_uri', validatedRedirect);

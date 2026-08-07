@@ -25,6 +25,13 @@ const EnvSchema = z.object({
   JWT_EXPIRES_IN: z.string().default('1h'),
   OAUTH_ENFORCE_GRANT_TYPES: z.coerce.boolean().default(false),
 
+  // First-run seed for the demo `default-client` (server/database.ts). Comma-separated.
+  // Admins can add/remove redirect URIs afterwards via /api/admin/clients — these only seed
+  // the initial whitelist so the demo works out of the box without hardcoding business domains.
+  DEFAULT_CLIENT_REDIRECT_URIS: z.string().default('http://localhost:5986/callback,http://localhost:3000/callback'),
+  DEFAULT_CLIENT_POST_LOGOUT_REDIRECT_URIS: z.string().default('http://localhost:5986/,http://localhost:3000/'),
+  DEFAULT_CLIENT_FRONTCHANNEL_LOGOUT_URI: z.string().default('http://localhost:3000/logout-frontchannel'),
+
   // MFA: SMS provider (all optional — defaults to console/dev provider)
   SMS_PROVIDER: z.enum(['console', 'aliyun', 'tencent']).default('console'),
   ALIYUN_SMS_ACCESS_KEY_ID: z.string().optional(),

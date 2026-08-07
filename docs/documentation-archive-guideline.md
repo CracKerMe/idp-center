@@ -109,7 +109,7 @@
 
 ## 9. 与当前项目实现相关的补充约束
 
-- 主应用使用 hash 路由，前端行为说明必须与 `src/App.tsx` 和 `src/routes/` 一致
+- 主应用使用 history 路由（`createBrowserHistory()`），前端行为说明必须与 `src/App.tsx` 和 `src/routes/` 一致
 - API 响应格式以 `server/utils/response.ts` 为准，默认结构为 `{ code, data, message, error }`
 - 默认管理员和默认客户端来自 `server/database.ts` 的 seed 逻辑，文档引用这些默认值时要说明它们属于开发默认配置
 - `.env.example` 中存在 AI Studio / Gemini 说明，但当前服务端强校验来源是 `server/config.ts`；运维文档必须以 `server/config.ts` 为准，不得只抄 `.env.example`

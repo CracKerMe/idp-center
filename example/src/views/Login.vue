@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { startAuthentication } from '@simplewebauthn/browser'
 import { useAuthStore, MfaRequiredError, type MfaFactor } from '../stores/auth'
+import SsoProviderButtons from '../components/SsoProviderButtons.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -14,18 +16,21 @@ const loading = ref(false)
 
 // MFA step state — populated when login() throws MfaRequiredError.
 // server/routes/auth.ts: TOTP/recovery codes verify directly at /mfa/verify; email/sms
-// need a POST /mfa/challenge first to actually send the code.
+// need a POST /mfa/challenge first to actually send the code; webauthn needs the challenge
+// response's `options` fed into navigator.credentials via startAuthentication().
 const mfaToken = ref('')
 const mfaFactors = ref<MfaFactor[]>([])
 const selectedFactor = ref<MfaFactor | null>(null)
 const mfaCode = ref('')
 const codeSent = ref(false)
+const useRecoveryCode = ref(false)
 
 const FACTOR_LABELS: Record<MfaFactor['type'], string> = {
   totp: 'Authenticator App (TOTP)',
   email: 'Email Code',
   sms: 'SMS Code',
   webauthn: 'Security Key (WebAuthn)',
+  recovery: 'Recovery Code',
 }
 
 async function handleSubmit() {
@@ -72,19 +77,38 @@ async function selectFactor(factor: MfaFactor) {
       loading.value = false
     }
   } else if (factor.type === 'webauthn') {
-    error.value = 'This demo does not implement the WebAuthn ceremony — pick another factor or use the main app UI.'
-    selectedFactor.value = null
+    await handleWebauthn(factor)
   }
   // totp: nothing to do, just show the code input.
 }
 
+async function handleWebauthn(factor: MfaFactor) {
+  error.value = ''
+  loading.value = true
+  try {
+    const challenge = await authStore.mfaChallenge(mfaToken.value, factor.id)
+    const assertion = await startAuthentication({ optionsJSON: challenge.options })
+    const success = await authStore.mfaVerify(mfaToken.value, factor.id, { response: assertion })
+    if (success) {
+      const redirect = route.query.redirect as string
+      await router.push(redirect || '/dashboard')
+    }
+  } catch (err: any) {
+    error.value = err.message || 'Security key verification failed'
+    selectedFactor.value = null
+  } finally {
+    loading.value = false
+  }
+}
+
 async function handleMfaVerify() {
-  if (!selectedFactor.value) return
   error.value = ''
   loading.value = true
 
   try {
-    const success = await authStore.mfaVerify(mfaToken.value, selectedFactor.value.id, mfaCode.value)
+    const success = useRecoveryCode.value
+      ? await authStore.mfaVerify(mfaToken.value, null, { code: mfaCode.value })
+      : await authStore.mfaVerify(mfaToken.value, selectedFactor.value!.id, { code: mfaCode.value })
     if (success) {
       const redirect = route.query.redirect as string
       await router.push(redirect || '/dashboard')
@@ -99,11 +123,28 @@ async function handleMfaVerify() {
 function backToFactorList() {
   selectedFactor.value = null
   mfaCode.value = ''
+  useRecoveryCode.value = false
   error.value = ''
+}
+
+function switchToRecoveryCode() {
+  error.value = ''
+  useRecoveryCode.value = true
+  selectedFactor.value = { id: '', type: 'recovery' }
+  mfaCode.value = ''
 }
 
 function handleOAuthLogin() {
   authStore.beginOAuthLogin(route.query.redirect as string)
+}
+
+async function handleSsoSuccess() {
+  const redirect = route.query.redirect as string
+  await router.push(redirect || '/dashboard')
+}
+
+function handleSsoError(message: string) {
+  error.value = message
 }
 </script>
 
@@ -182,13 +223,33 @@ function handleOAuthLogin() {
           >
             {{ factor.name || FACTOR_LABELS[factor.type] || factor.type }}
           </button>
+          <div class="text-center mt-4">
+            <button type="button" class="text-xs font-bold" style="color: var(--primary-600); background: none; border: none; cursor: pointer;" @click="switchToRecoveryCode">
+              Use a recovery code instead
+            </button>
+          </div>
         </div>
 
-        <!-- Step 2b: enter the code for the chosen factor -->
+        <!-- Step 2b: WebAuthn ceremony in progress — no code to type, just wait for the browser prompt -->
+        <div v-else-if="selectedFactor.type === 'webauthn'" class="text-center" style="padding: var(--space-6) 0;">
+          <span v-if="loading" class="spinner" style="width: 32px; height: 32px; margin: 0 auto var(--space-4);"></span>
+          <p class="text-sm text-muted">Follow your browser's prompt to use your security key.</p>
+          <button
+            v-if="mfaFactors.length > 1"
+            type="button"
+            class="btn btn-secondary"
+            style="width: 100%; margin-top: var(--space-6); height: 40px;"
+            @click="backToFactorList"
+          >
+            Use a different factor
+          </button>
+        </div>
+
+        <!-- Step 2c: enter the code for the chosen factor (or a recovery code) -->
         <form v-else @submit.prevent="handleMfaVerify">
           <div class="form-group">
             <label class="form-label">
-              {{ FACTOR_LABELS[selectedFactor.type] || selectedFactor.type }}
+              {{ useRecoveryCode ? 'Recovery Code' : (FACTOR_LABELS[selectedFactor.type] || selectedFactor.type) }}
               <span v-if="codeSent" class="text-xs text-muted">— code sent</span>
             </label>
             <input
@@ -196,8 +257,8 @@ function handleOAuthLogin() {
               type="text"
               class="form-input"
               required
-              placeholder="6-digit code"
-              maxlength="10"
+              :placeholder="useRecoveryCode ? 'xxxx-xxxx-xxxx' : '6-digit code'"
+              maxlength="20"
               autofocus
             />
           </div>
@@ -213,7 +274,7 @@ function handleOAuthLogin() {
           </button>
 
           <button
-            v-if="mfaFactors.length > 1"
+            v-if="mfaFactors.length > 1 || useRecoveryCode"
             type="button"
             class="btn btn-secondary"
             style="width: 100%; margin-top: var(--space-3); height: 40px;"
@@ -238,6 +299,8 @@ function handleOAuthLogin() {
               <span style="margin-right: 8px;">🌐</span> Single Sign-On (SSO)
             </button>
           </div>
+
+          <SsoProviderButtons @success="handleSsoSuccess" @error="handleSsoError" />
 
           <div class="text-center mt-10">
             <p class="text-sm">

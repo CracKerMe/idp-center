@@ -53,7 +53,7 @@ onMounted(async () => {
         </div>
 
         <transition name="scale">
-          <div v-else-if="status === 'success'" class="verification-state">
+          <div v-if="status === 'success'" class="verification-state">
             <div class="status-icon success mb-8">
               <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7" />
@@ -71,7 +71,7 @@ onMounted(async () => {
         </transition>
 
         <transition name="scale">
-          <div v-else-if="status === 'error'" class="verification-state">
+          <div v-if="status === 'error'" class="verification-state">
             <div class="status-icon error mb-8">
               <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" />

@@ -4,14 +4,14 @@
  */
 
 import { useState, useEffect } from 'react';
-import { createRouter, RouterProvider, createHashHistory } from '@tanstack/react-router';
+import { createRouter, RouterProvider, createBrowserHistory } from '@tanstack/react-router';
 import { routeTree } from './routeTree.gen';
 import { authFetch, parseApiResponse, isSuccess } from './utils/fetch';
 
-const hashHistory = createHashHistory();
-const router = createRouter({ 
+const browserHistory = createBrowserHistory();
+const router = createRouter({
   routeTree,
-  history: hashHistory,
+  history: browserHistory,
   context: { user: null, setUser: () => {} }
 });
 
@@ -51,21 +51,16 @@ export default function App() {
 
   useEffect(() => {
     // Handle GitHub OAuth callback — exchange short-lived code for tokens
-    // In hash mode, query params are after the hash (e.g., /#/?github_code=xxx)
-    const hash = window.location.hash;
-    const hashQueryIndex = hash.indexOf('?');
-    const hashQuery = hashQueryIndex !== -1 ? hash.slice(hashQueryIndex + 1) : '';
-    const hashParams = new URLSearchParams(hashQuery);
-    const githubCode = hashParams.get('github_code');
-    const federationCode = hashParams.get('federation_code');
-    const sessionId = hashParams.get('session_id');
+    const queryParams = new URLSearchParams(window.location.search);
+    const githubCode = queryParams.get('github_code');
+    const federationCode = queryParams.get('federation_code');
+    const sessionId = queryParams.get('session_id');
 
     const init = async () => {
       if (federationCode) {
         // Same one-time-code handoff as GitHub, shared by SAML and OIDC RP logins
         // (server/services/identity-link.service.ts's issueFederatedSession).
-        const cleanHash = hashQueryIndex !== -1 ? hash.slice(0, hashQueryIndex) : hash;
-        window.history.replaceState({}, '', window.location.pathname + cleanHash);
+        window.history.replaceState({}, '', window.location.pathname);
         try {
           const exchangeRes = await fetch('/api/auth/federation/exchange', {
             method: 'POST',
@@ -90,9 +85,8 @@ export default function App() {
       }
 
       if (githubCode) {
-        // Clean up URL immediately (hash mode: keep hash path, remove query params)
-        const cleanHash = hashQueryIndex !== -1 ? hash.slice(0, hashQueryIndex) : hash;
-        window.history.replaceState({}, '', window.location.pathname + cleanHash);
+        // Clean up URL immediately (remove query params, keep path)
+        window.history.replaceState({}, '', window.location.pathname);
         try {
           const exchangeRes = await fetch('/api/auth/github/exchange', {
             method: 'POST',
@@ -115,9 +109,9 @@ export default function App() {
                 redirectTarget.startsWith('/') &&
                 !redirectTarget.startsWith('//')
               ) {
-                window.location.replace('/#' + redirectTarget);
+                window.location.replace(redirectTarget);
               } else {
-                window.location.replace('/#/');
+                window.location.replace('/');
               }
               return;
             }
@@ -129,14 +123,12 @@ export default function App() {
       }
 
       // Legacy: handle old-style tokens in URL (backwards compat)
-      const params = new URLSearchParams(window.location.search);
-      const accessToken = params.get('access_token');
-      const refreshToken = params.get('refresh_token');
+      const accessToken = queryParams.get('access_token');
+      const refreshToken = queryParams.get('refresh_token');
       if (accessToken) {
         localStorage.setItem('token', accessToken);
         if (refreshToken) localStorage.setItem('refresh_token', refreshToken);
-        // Hash mode: clean query params, keep hash
-        window.history.replaceState({}, '', window.location.pathname + window.location.hash.split('?')[0]);
+        window.history.replaceState({}, '', window.location.pathname);
       }
 
       const token = localStorage.getItem('token');

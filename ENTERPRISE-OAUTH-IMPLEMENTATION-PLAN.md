@@ -24,7 +24,7 @@
 2. 起本地 PG：`docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=idp_center postgres:16`。
 3. `.env` 补 `DATABASE_URL` 或 `PG_HOST/PG_PORT/PG_USER/PG_PASSWORD/PG_DATABASE`；删除 `DB_PATH`、`JWT_REFRESH_SECRET`（pg-support 的 `server/config.ts` 已移除后者 —— 它在 main 上从未被引用过）。
 4. `pnpm db:push && pnpm test`。
-5. 从仓库移除 `auth.db`、`better-sqlite3.d.ts`，`Dockerfile` 去掉 `COPY auth.db`。
+5. ✅ 已完成（2026-08）：`auth.db` 从未提交过、`Dockerfile` 也从未有过 `COPY auth.db`，这两项本就是 moot；`tests/better-sqlite3.d.ts` 与 `package.json`/`pnpm-workspace.yaml` 里的 `better-sqlite3` devDependency 已移除——唯一的实际用途（`tests/github-oauth.property.test.ts` 的内存态 fixture db）已改用 Node 内置的 `node:sqlite`（`DatabaseSync`），API 与 better-sqlite3 同步接口基本一致，无需再装原生编译工具链，`Dockerfile` 里对应的 `python3/make/g++/pkg-config/binutils` 安装步骤和 `better-sqlite3` 专属裁剪步骤也一并删除。
 6. **把 `.env` 从工作区移除并加入 `.gitignore`** —— 当前 `.env` 带真实外观的密钥被提交了，同时轮换其中所有凭证。
 
 > 注意：pg-support 的 `initDatabase()` 在启动时执行 `npx drizzle-kit push`。生产环境要改成显式 `pnpm db:migrate`（见 4.1），启动期 push 只保留在 dev/test。
@@ -304,7 +304,7 @@ export const deviceCodes = pgTable('device_codes', {
 
 `POST /api/oidc/device_authorization`（需客户端认证，注册为 `none` 的公开客户端放行）返回 `{device_code, user_code, verification_uri, verification_uri_complete, expires_in: 600, interval: 5}`。
 
-**哈希路由约束**：前端是 `createHashHistory()` 的 SPA，fragment 永远不会发到服务端。因此 `verification_uri = ${APP_URL}/#/device`，`verification_uri_complete = ${APP_URL}/#/device?user_code=BCDF-GHJK`，由 SPA 自行解析 —— 与 `src/App.tsx` 处理 `github_code` 的现有做法一致。**不要**尝试服务端重定向携带该码。
+**路由说明**：前端已切换为 `createBrowserHistory()` 的 SPA，服务端生产环境通过 `app.get('*')` 回退到 `index.html`，开发环境由 Vite middleware 处理。因此 `verification_uri = ${APP_URL}/device`，`verification_uri_complete = ${APP_URL}/device?user_code=BCDF-GHJK`，由 SPA 自行解析 —— 与 `src/App.tsx` 处理 `github_code` 的现有做法一致。
 
 前端新增 `src/routes/device.tsx` + `src/pages/DeviceVerify.tsx`，鉴权门禁照抄 `src/routes/authorize.tsx` 的 `beforeLoad`（未登录跳 `/login` 并带 `redirect`）。流程：输入/确认码 → `GET /api/oidc/device/verify?user_code=`（需登录，返回 client_name + scopes）→ `POST /api/oidc/device/approve` | `/device/deny`。
 
@@ -365,9 +365,9 @@ export const backchannelLogoutDeliveries = pgTable('backchannel_logout_deliverie
 `GET|POST /api/oidc/end_session`：
 1. 用 `verifyInternalJwt` 验 `id_token_hint` 签名，**忽略 `exp`**（登出提示本就应该是过期的），取 `sub`/`sid`/`aud`；
 2. `post_logout_redirect_uri` 与 `clients.post_logout_redirect_uris` **精确匹配**，且仅在 `id_token_hint` 验证通过时生效，否则停留在中间页；
-3. 按规范 SHOULD 做二次确认，跳 `${APP_URL}/#/logout?...`；
+3. 按规范 SHOULD 做二次确认，跳 `${APP_URL}/logout?...`；
 4. `POST /api/oidc/end_session/confirm`：整个 `browserSessionId` 置 `terminatedAt` → `revokeTokensBySession()` → 按 `oidc_session_id` 撤销 refresh token → 删 `sessions` 行 → 入队 back-channel → 返回 `{ front_channel_logout_uris: string[], post_logout_redirect_uri }`；
-5. front-channel：由 SPA 为每个 URI 渲染隐藏 `<iframe src="{uri}?iss={issuer}&sid={sid}">`，等 `onload`（上限 2s）后跳 `post_logout_redirect_uri` + `state`。**这个拆分是哈希路由逼出来的** —— 服务端无法在 `/#/` 路由内吐出多 iframe 的 HTML 页，所以服务端只返回 URI 列表，iframe 归 SPA 管。新增 `src/routes/logout.tsx` + `src/pages/Logout.tsx`。
+5. front-channel：由 SPA 为每个 URI 渲染隐藏 `<iframe src="{uri}?iss={issuer}&sid={sid}">`，等 `onload`（上限 2s）后跳 `post_logout_redirect_uri` + `state`。**当前架构由 SPA 管理 iframe** —— 服务端只返回 URI 列表，iframe 归 SPA 管。新增 `src/routes/logout.tsx` + `src/pages/Logout.tsx`。（注：已从 hash 路由切换至 history 路由，服务端现在可以渲染 HTML 页，但保持 SPA 管理 iframe 的架构不变。）
 
 `server/services/backchannel-logout.service.ts`：
 
@@ -639,7 +639,7 @@ export async function updateBaseline(userId: string): Promise<void>;
 
 ### 4.4 Kubernetes / Helm
 
-- 现有 `Dockerfile` 是 distroless 两阶段构建，已经够用。去掉 `COPY auth.db`。
+- 现有 `Dockerfile` 是 distroless 两阶段构建，已经够用（`COPY auth.db` 从未存在过，better-sqlite3 编译工具链已于 2026-08 移除）。
 - 新增 `deploy/helm/idp-center/`：Deployment（replicas ≥ 2）、Service、Ingress、HPA（按 CPU + `/metrics` 的 QPS）、PDB、ConfigMap、Secret（`JWT_SECRET`/`ENCRYPTION_KEY`/`DATABASE_URL`/SMTP）、`initContainer` 跑 `pnpm db:migrate`。
 - 探针接 4.2 之后的 `/livez`、`/readyz`。
 - **前置约束**：多副本要求 4.2（共享密钥缓存）与 4.3（任务选主）先完成，否则会出现密钥轮换竞态和重复投递。

@@ -32,6 +32,11 @@ const router = createRouter({
       component: () => import("../views/Callback.vue"),
     },
     {
+      path: "/logout-frontchannel",
+      name: "logout-frontchannel",
+      component: () => import("../views/LogoutFrontchannel.vue"),
+    },
+    {
       path: "/dashboard",
       name: "dashboard",
       component: () => import("../views/Dashboard.vue"),
@@ -53,6 +58,23 @@ const router = createRouter({
       path: "/setup-otp",
       name: "setup-otp",
       component: () => import("../views/SetupOTP.vue"),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: "/mfa-factors",
+      name: "mfa-factors",
+      component: () => import("../views/MfaFactors.vue"),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: "/device-flow",
+      name: "device-flow",
+      component: () => import("../views/DeviceLogin.vue"),
+    },
+    {
+      path: "/device",
+      name: "device-approve",
+      component: () => import("../views/DeviceApprove.vue"),
       meta: { requiresAuth: true },
     },
     {

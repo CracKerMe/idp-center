@@ -126,6 +126,6 @@ describe.skipIf(skipIfNoDb)('OIDC-RP federation callback', () => {
     const res = await request(app).get(`/api/federation/${ALIAS}/oidc/callback`).query({ state, code: 'irrelevant' });
     expect(res.status).toBe(302);
     expect(res.headers.location).not.toContain('evil.com');
-    expect(res.headers.location).toContain('/#/?federation_code=');
+    expect(res.headers.location).toContain('/?federation_code=');
   });
 });

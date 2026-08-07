@@ -26,8 +26,18 @@ interface TokenData {
 
 export interface MfaFactor {
   id: string
-  type: 'totp' | 'email' | 'sms' | 'webauthn'
+  type: 'totp' | 'email' | 'sms' | 'webauthn' | 'recovery'
   name?: string
+  status?: string
+  createdAt?: string | null
+  lastUsedAt?: string | null
+}
+
+export interface IdpOption {
+  alias: string
+  type: 'saml' | 'oidc' | 'ldap'
+  displayName: string
+  matchesEmailDomain?: boolean
 }
 
 /**
@@ -141,9 +151,11 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  // Sends a one-time code for factor types that need one (email/sms). TOTP, recovery codes
-  // and WebAuthn are verified directly at mfaVerify() with no separate challenge step.
-  async function mfaChallenge(mfaToken: string, factorId: string): Promise<void> {
+  // Sends a one-time code for factor types that need one (email/sms), or fetches WebAuthn
+  // assertion options. TOTP and recovery codes are verified directly at mfaVerify() with no
+  // separate challenge step. Returns the response payload — `{options}` for webauthn, `{}`
+  // otherwise — so callers can branch without a second round trip.
+  async function mfaChallenge(mfaToken: string, factorId: string): Promise<any> {
     const response = await fetch('/api/auth/mfa/challenge', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -151,10 +163,12 @@ export const useAuthStore = defineStore('auth', () => {
     })
     const json = await response.json()
     if (!response.ok) throw new Error(json.error || 'Failed to send verification code')
+    return json.data
   }
 
-  // Completes login after the second factor is verified.
-  async function mfaVerify(mfaToken: string, factorId: string, code: string): Promise<boolean> {
+  // Completes login after the second factor is verified. `body` is either {code} (totp/email/
+  // sms/recovery) or {response} (webauthn assertion) — always merged with factorId when given.
+  async function mfaVerify(mfaToken: string, factorId: string | null, body: { code?: string; response?: any }): Promise<boolean> {
     loading.value = true
     error.value = null
 
@@ -162,7 +176,7 @@ export const useAuthStore = defineStore('auth', () => {
       const response = await fetch('/api/auth/mfa/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mfa_token: mfaToken, factor_id: factorId, code })
+        body: JSON.stringify({ mfa_token: mfaToken, ...(factorId ? { factor_id: factorId } : {}), ...body })
       })
 
       const json = await response.json()
@@ -229,15 +243,20 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  // Logout
+  // Logout. For sessions established via SSO (beginOAuthLogin/exchangeCodeForToken), this
+  // also drives RP-Initiated Logout (OIDC end_session) against the IDP itself — without it,
+  // /api/auth/logout only revokes this app's own token and the shared 5986 browser session
+  // (and any other RP on it) is left logged in.
   async function logout(): Promise<void> {
+    const idTokenHint = localStorage.getItem('id_token')
+
     try {
       // Call server logout API to revoke session and tokens
       const sessionId = localStorage.getItem('session_id')
       const headers: Record<string, string> = {
         'Content-Type': 'application/json'
       }
-      
+
       if (token.value) {
         headers['Authorization'] = `Bearer ${token.value}`
       }
@@ -259,6 +278,18 @@ export const useAuthStore = defineStore('auth', () => {
       localStorage.removeItem('token')
       localStorage.removeItem('refresh_token')
       localStorage.removeItem('session_id')
+      localStorage.removeItem('id_token')
+    }
+
+    if (idTokenHint) {
+      const params = new URLSearchParams({
+        id_token_hint: idTokenHint,
+        post_logout_redirect_uri: `${window.location.origin}/`
+      })
+      // Full navigation, not fetch: 5986 owns the browser session that end_session/confirm
+      // needs (see server/routes/oidc.ts), and it fans out front/back-channel logout to
+      // every other RP sharing that session before redirecting back here.
+      window.location.href = `${OAUTH_CONFIG.idpBaseUrl}/api/oidc/end_session?${params.toString()}`
     }
   }
 
@@ -337,7 +368,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   // OAuth2 Authorization Code Flow, step 1: generate state + PKCE, stash them in
   // sessionStorage keyed by state so Callback.vue can validate/retrieve them, then redirect
-  // to the IDP's hash-routed authorize page. This is the single implementation shared by
+  // to the IDP's history-routed authorize page. This is the single implementation shared by
   // Home.vue and Login.vue's "Single Sign-On" buttons — do not re-duplicate this logic in
   // components, the nonce/PKCE bookkeeping is easy to get subtly wrong twice.
   async function beginOAuthLogin(returnTo?: string): Promise<void> {
@@ -360,8 +391,9 @@ export const useAuthStore = defineStore('auth', () => {
       code_challenge_method: 'S256'
     })
 
-    // Hash route — the SPA is served with createHashHistory, see src/App.tsx on the main app.
-    window.location.href = `${OAUTH_CONFIG.idpBaseUrl}/#/authorize?${params.toString()}`
+    // The IDP is served with createBrowserHistory (see src/App.tsx on the main app), so
+    // routes live in the real path, not a "#/..." fragment.
+    window.location.href = `${OAUTH_CONFIG.idpBaseUrl}/authorize?${params.toString()}`
   }
 
   /** Reads back and clears the state stashed by beginOAuthLogin(); null if invalid/expired/reused. */
@@ -404,6 +436,9 @@ export const useAuthStore = defineStore('auth', () => {
       localStorage.setItem('token', data.access_token)
       if (data.refresh_token) localStorage.setItem('refresh_token', data.refresh_token)
       if (data.user) user.value = data.user
+      // Kept so logout() can drive RP-Initiated Logout (/api/oidc/end_session) — only
+      // sessions that came through this OIDC flow (not the direct-login form) have one.
+      if (data.id_token) localStorage.setItem('id_token', data.id_token)
 
       return data
     } catch (err: any) {
@@ -546,6 +581,163 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  // --- MFA factor management (server/routes/mfa.ts, mounted at /api/user/mfa) ---
+
+  async function getMfaFactors(): Promise<{ factors: MfaFactor[]; recovery_codes_remaining: number }> {
+    const response = await http.get('/user/mfa/factors')
+    return response.data.data ?? response.data
+  }
+
+  async function totpSetup() {
+    const response = await http.post('/user/mfa/totp/setup')
+    return response.data.data ?? response.data as { factorId: string; secret: string; qrCodeUrl: string }
+  }
+
+  async function totpConfirm(factorId: string, tokenStr: string) {
+    await http.post('/user/mfa/totp/verify', { factorId, token: tokenStr })
+  }
+
+  async function emailFactorSetup(email?: string) {
+    const response = await http.post('/user/mfa/email/setup', email ? { email } : {})
+    return response.data.data ?? response.data as { factorId: string; email: string }
+  }
+
+  async function emailFactorConfirm(factorId: string, code: string) {
+    await http.post('/user/mfa/email/verify', { factorId, code })
+  }
+
+  // WebAuthn registration ("Add security key"). Needs @simplewebauthn/browser's
+  // startRegistration() at the call site to turn `options` into a real credential ceremony.
+  async function webauthnRegisterOptions() {
+    const response = await http.post('/user/mfa/webauthn/register/options')
+    return response.data.data ?? response.data as { factorId: string; options: any }
+  }
+
+  async function webauthnRegisterVerify(factorId: string, attestationResponse: any, name?: string) {
+    await http.post('/user/mfa/webauthn/register/verify', { factorId, response: attestationResponse, name })
+  }
+
+  async function generateRecoveryCodes(): Promise<string[]> {
+    const response = await http.post('/user/mfa/recovery/generate')
+    return (response.data.data ?? response.data).codes
+  }
+
+  async function disableMfaFactor(factorId: string, password: string) {
+    await http.delete(`/user/mfa/factors/${factorId}`, { data: { password } })
+  }
+
+  // --- Federated login (server/routes/federation/*, server/routes/auth/federation.ts) ---
+
+  async function getIdpProviders(): Promise<IdpOption[]> {
+    const response = await http.get('/auth/idps')
+    return (response.data.data ?? response.data).providers
+  }
+
+  // SAML/OIDC federation redirects always land back on the IDP Center main app's own
+  // origin (server/routes/federation/{saml,oidc-rp}.ts only allow a same-origin relative
+  // `redirect`), so this demo — a separate origin/port — cannot receive the callback itself.
+  // The button below hands off to the main app to complete the round trip; only LDAP (a
+  // direct form POST with no redirect) can be fully driven from this demo.
+  function federationLoginUrl(alias: string, type: 'saml' | 'oidc'): string {
+    return `${OAUTH_CONFIG.idpBaseUrl}/api/federation/${alias}/${type}/login`
+  }
+
+  async function ldapLogin(alias: string, username: string, password: string): Promise<boolean> {
+    loading.value = true
+    error.value = null
+    try {
+      const response = await http.post(`/federation/${alias}/ldap/login`, { username, password })
+      const data = response.data.data ?? response.data
+      applySuccessfulAuth(data)
+      return true
+    } catch (err: any) {
+      error.value = err.response?.data?.error || 'LDAP sign-in failed'
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
+
+  // --- OAuth2 Device Authorization Grant (RFC 8628) ---
+
+  async function startDeviceAuthorization(scope = 'openid profile email') {
+    const response = await http.post('/oidc/device_authorization', {
+      client_id: OAUTH_CONFIG.clientId,
+      client_secret: OAUTH_CONFIG.clientSecret,
+      scope
+    })
+    return response.data as {
+      device_code: string
+      user_code: string
+      verification_uri: string
+      verification_uri_complete: string
+      expires_in: number
+      interval: number
+    }
+  }
+
+  /** One poll of /token with the device_code grant. Returns tokens once approved, or the raw
+   *  OAuth error code ('authorization_pending' | 'slow_down' | 'expired_token' | 'access_denied')
+   *  while the caller should keep waiting or give up. */
+  async function pollDeviceToken(deviceCode: string): Promise<{ status: 'approved' | 'pending' | 'slow_down' | 'denied' | 'expired'; data?: TokenData }> {
+    try {
+      const response = await http.post('/oidc/token', {
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        device_code: deviceCode,
+        client_id: OAUTH_CONFIG.clientId,
+        client_secret: OAUTH_CONFIG.clientSecret
+      })
+      applySuccessfulAuth(response.data)
+      if (!response.data.user) await fetchUserInfo(response.data.access_token).catch(() => {})
+      return { status: 'approved', data: response.data }
+    } catch (err: any) {
+      const oauthError = err.response?.data?.error
+      if (oauthError === 'authorization_pending') return { status: 'pending' }
+      if (oauthError === 'slow_down') return { status: 'slow_down' }
+      if (oauthError === 'access_denied') return { status: 'denied' }
+      if (oauthError === 'expired_token') return { status: 'expired' }
+      throw err
+    }
+  }
+
+  // Approval-side of the device flow: the user is on their own logged-in browser session,
+  // types in the user_code shown on the "device", and approves/denies it there.
+  async function deviceVerify(userCode: string) {
+    const response = await http.get('/oidc/device/verify', { params: { user_code: userCode } })
+    return response.data.data ?? response.data as { client_name: string; scope: string }
+  }
+
+  async function deviceApprove(userCode: string) {
+    await http.post('/oidc/device/approve', { user_code: userCode })
+  }
+
+  async function deviceDeny(userCode: string) {
+    await http.post('/oidc/device/deny', { user_code: userCode })
+  }
+
+  // --- Token introspection (RFC 7662) / revocation (RFC 7009) ---
+  // Both require client authentication — the demo already holds default-client's secret for
+  // the /token exchange, so it's reused here to inspect/kill its own issued tokens.
+
+  async function introspectToken(tokenStr: string, tokenTypeHint?: 'access_token' | 'refresh_token') {
+    const response = await http.post('/oidc/introspect', {
+      token: tokenStr,
+      token_type_hint: tokenTypeHint,
+      client_id: OAUTH_CONFIG.clientId,
+      client_secret: OAUTH_CONFIG.clientSecret
+    })
+    return response.data
+  }
+
+  async function revokeToken(tokenStr: string, tokenTypeHint?: 'access_token' | 'refresh_token') {
+    await http.post('/oidc/revoke', {
+      token: tokenStr,
+      token_type_hint: tokenTypeHint,
+      client_id: OAUTH_CONFIG.clientId,
+      client_secret: OAUTH_CONFIG.clientSecret
+    })
+  }
+
   return {
     user,
     token,
@@ -574,6 +766,25 @@ export const useAuthStore = defineStore('auth', () => {
     verifyPasswordResetToken,
     resetPassword,
     verifyEmail,
-    resendVerificationEmail
+    resendVerificationEmail,
+    getMfaFactors,
+    totpSetup,
+    totpConfirm,
+    emailFactorSetup,
+    emailFactorConfirm,
+    webauthnRegisterOptions,
+    webauthnRegisterVerify,
+    generateRecoveryCodes,
+    disableMfaFactor,
+    getIdpProviders,
+    federationLoginUrl,
+    ldapLogin,
+    startDeviceAuthorization,
+    pollDeviceToken,
+    deviceVerify,
+    deviceApprove,
+    deviceDeny,
+    introspectToken,
+    revokeToken
   }
 })

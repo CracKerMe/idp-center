@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 
 const authStore = useAuthStore()
+const router = useRouter()
 const user = computed(() => authStore.user)
 
 const token = computed(() => {
@@ -14,7 +16,7 @@ const token = computed(() => {
 const tokenPayload = computed(() => {
   const tokenValue = token.value
   if (!tokenValue) return null
-  
+
   try {
     const parts = tokenValue.split('.')
     if (parts.length !== 3) return null
@@ -26,6 +28,44 @@ const tokenPayload = computed(() => {
     return null
   }
 })
+
+// --- Token introspection (RFC 7662) / revocation (RFC 7009) ---
+// Calls the OAuth /introspect and /revoke endpoints directly with the demo's client
+// credentials — only works when VITE_CLIENT_SECRET is configured (see README).
+const introspection = ref<any>(null)
+const introspecting = ref(false)
+const introspectError = ref('')
+const revoking = ref(false)
+
+async function runIntrospect() {
+  if (!token.value) return
+  introspecting.value = true
+  introspectError.value = ''
+  try {
+    introspection.value = await authStore.introspectToken(token.value, 'access_token')
+  } catch (err: any) {
+    introspectError.value = err.response?.data?.error_description || err.response?.data?.error || 'Introspection failed — is VITE_CLIENT_SECRET configured?'
+  } finally {
+    introspecting.value = false
+  }
+}
+
+async function runRevoke() {
+  if (!token.value) return
+  if (!confirm('Revoke this access token (and its refresh token family) right now?')) return
+  revoking.value = true
+  try {
+    await authStore.revokeToken(token.value, 'access_token')
+    const refreshToken = localStorage.getItem('refresh_token')
+    if (refreshToken) await authStore.revokeToken(refreshToken, 'refresh_token')
+    await authStore.logout()
+    router.push('/login')
+  } catch (err: any) {
+    introspectError.value = err.response?.data?.error_description || err.response?.data?.error || 'Revocation failed'
+  } finally {
+    revoking.value = false
+  }
+}
 </script>
 
 <template>
@@ -108,9 +148,30 @@ const tokenPayload = computed(() => {
             <div v-else class="terminal-body text-center text-error font-bold">MISSING_CREDENTIALS</div>
           </div>
         </div>
+
+        <!-- RFC 7662 / RFC 7009: introspect and revoke the current access token via /api/oidc -->
+        <div class="mt-8">
+          <label class="info-label mb-2 block">Token Introspection (RFC 7662)</label>
+          <div class="flex gap-3 mb-4">
+            <button class="btn btn-secondary btn-sm" :disabled="introspecting" @click="runIntrospect">
+              {{ introspecting ? 'Checking...' : 'Introspect Access Token' }}
+            </button>
+            <button class="btn btn-secondary btn-sm" style="color: var(--error);" :disabled="revoking" @click="runRevoke">
+              {{ revoking ? 'Revoking...' : 'Revoke Token (RFC 7009)' }}
+            </button>
+          </div>
+          <div v-if="introspectError" class="error-message mb-4">{{ introspectError }}</div>
+          <div v-if="introspection" class="code-terminal">
+            <div class="terminal-header">
+              <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+              <span class="terminal-title">introspect_response.json</span>
+            </div>
+            <div class="terminal-body"><code>{{ JSON.stringify(introspection, null, 2) }}</code></div>
+          </div>
+        </div>
       </div>
     </div>
-    
+
     <!-- Strategic Actions -->
     <div class="mb-12">
       <div class="text-center mb-10">
@@ -118,20 +179,20 @@ const tokenPayload = computed(() => {
         <h2>Manage Identity Assets</h2>
       </div>
       <div class="grid grid-3">
-        <router-link to="/setup-otp" class="action-card">
+        <router-link to="/mfa-factors" class="action-card">
           <div class="action-icon">🔒</div>
           <div class="action-text">
             <strong>Security Hardening</strong>
-            <p>Configure multi-factor authentication protocols.</p>
+            <p>Manage authenticator apps, security keys, email codes, and recovery codes.</p>
           </div>
           <div class="action-arrow">&rarr;</div>
         </router-link>
-        
+
         <router-link to="/sessions" class="action-card">
           <div class="action-icon">📱</div>
           <div class="action-text">
             <strong>Active Probes</strong>
-            <p>Monitor and terminate concurrent active sessions.</p>
+            <p>Monitor and terminate concurrent active sessions and trusted devices.</p>
           </div>
           <div class="action-arrow">&rarr;</div>
         </router-link>
@@ -141,6 +202,15 @@ const tokenPayload = computed(() => {
           <div class="action-text">
             <strong>Profile Mutation</strong>
             <p>Modify core identity attributes and credentials.</p>
+          </div>
+          <div class="action-arrow">&rarr;</div>
+        </router-link>
+
+        <router-link to="/device-flow" class="action-card">
+          <div class="action-icon">📺</div>
+          <div class="action-text">
+            <strong>Device Authorization</strong>
+            <p>Try the RFC 8628 device code flow, as used by CLIs and TVs.</p>
           </div>
           <div class="action-arrow">&rarr;</div>
         </router-link>
@@ -283,7 +353,7 @@ const tokenPayload = computed(() => {
   border-radius: var(--radius-xl);
 }
 
-.action-text strong { display: block; font-size: 1.125rem; color: var(--slate-900); mb-1; }
+.action-text strong { display: block; font-size: 1.125rem; color: var(--slate-900); margin-bottom: var(--space-1); }
 .action-text p { font-size: 0.875rem; color: var(--slate-500); margin: 0; line-height: 1.5; }
 
 .action-arrow {

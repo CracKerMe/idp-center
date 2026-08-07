@@ -13,10 +13,10 @@ interface Session {
 
 interface TrustedDevice {
   id: string
-  device_name: string
-  ip_address: string
-  trusted_at: string
-  last_used_at: string | null
+  deviceName: string
+  trustedAt: string
+  expiresAt: string
+  lastUsedAt: string | null
 }
 
 const authStore = useAuthStore()
@@ -196,12 +196,12 @@ onMounted(() => {
             class="device-row"
           >
             <div class="device-label">
-               <h4 class="mb-0" style="font-size: 0.95rem;">{{ device.device_name || 'Standard Trust Node' }}</h4>
-               <p class="text-xs text-muted mb-0">{{ device.ip_address }} • Linked {{ formatDate(device.trusted_at) }}</p>
+               <h4 class="mb-0" style="font-size: 0.95rem;">{{ device.deviceName || 'Standard Trust Node' }}</h4>
+               <p class="text-xs text-muted mb-0">Linked {{ formatDate(device.trustedAt) }} • Expires {{ formatDate(device.expiresAt) }}</p>
             </div>
-            
+
             <div class="device-status">
-               <span class="text-xs text-muted" style="margin-right: var(--space-6);">Last Signal: {{ device.last_used_at ? formatDate(device.last_used_at) : 'None' }}</span>
+               <span class="text-xs text-muted" style="margin-right: var(--space-6);">Last Signal: {{ device.lastUsedAt ? formatDate(device.lastUsedAt) : 'None' }}</span>
                <button
                  @click="handleRevokeDevice(device.id)"
                  class="btn btn-secondary btn-sm"

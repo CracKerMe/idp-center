@@ -84,7 +84,7 @@
 idp-center/
 ├── src/                      # 前端源码（React + TanStack Router）
 │   ├── pages/                # 页面组件（含 pages/admin/ 管理后台）
-│   ├── routes/                # 路由定义（hash 路由）
+│   ├── routes/                # 路由定义（history 路由）
 │   └── utils/fetch.ts        # 请求封装
 ├── server/
 │   ├── routes/                # API 路由（auth/oidc/admin/mfa/scim/user/federation/well-known/health）

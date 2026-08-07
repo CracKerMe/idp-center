@@ -8,7 +8,7 @@ import { promisify } from 'util';
 import { connectionString, config } from './config.js';
 import * as schema from './schema.js';
 import { users, tenants, clients, accessTokens } from './schema.js';
-import { eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import { ensureKeysInitialized } from './services/keys.service.js';
 import { migrateLegacyTotpFactors } from './services/mfa.service.js';
 import { migrateLegacyAdminsToRoles } from './services/rbac.service.js';
@@ -148,9 +148,27 @@ async function seedDefaults() {
       clientId: 'default-client',
       clientSecret: generatedClientSecret,
       clientName: 'Default Client',
-      redirectUris: 'http://localhost:5986/callback,http://localhost:3000/callback',
+      // Whitelist source is DEFAULT_CLIENT_REDIRECT_URIS (server/config.ts), not hardcoded —
+      // adding a new business app's callback URL just needs an env change, no code edit.
+      // Beyond first-run seeding, admins manage this per-client via /api/admin/clients.
+      redirectUris: config.DEFAULT_CLIENT_REDIRECT_URIS,
       grantTypes: 'authorization_code',
+      // RP-Initiated Logout (server/routes/oidc.ts end_session/confirm): lets business apps
+      // redirect back here after SSO logout, and lets end_session/confirm notify them via a
+      // hidden iframe so their local session is torn down along with the 5986 one.
+      postLogoutRedirectUris: config.DEFAULT_CLIENT_POST_LOGOUT_REDIRECT_URIS,
+      frontchannelLogoutUri: config.DEFAULT_CLIENT_FRONTCHANNEL_LOGOUT_URI,
     }).onConflictDoNothing();
+  } else {
+    // Backfill for DBs seeded before RP-Initiated Logout URIs existed on default-client —
+    // without this, SSO logout from a business app never reaches 5986's end_session.
+    await db
+      .update(clients)
+      .set({
+        postLogoutRedirectUris: config.DEFAULT_CLIENT_POST_LOGOUT_REDIRECT_URIS,
+        frontchannelLogoutUri: config.DEFAULT_CLIENT_FRONTCHANNEL_LOGOUT_URI,
+      })
+      .where(and(eq(clients.clientId, 'default-client'), isNull(clients.postLogoutRedirectUris)));
   }
 
   if (generatedAdminPassword || generatedClientSecret) {

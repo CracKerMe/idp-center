@@ -54,9 +54,8 @@ function clearAuthAndRedirect(): void {
   localStorage.removeItem('refresh_token');
   localStorage.removeItem('session_id');
   
-  // Hash mode: redirect to /#/login
-  if (!window.location.hash.startsWith('#/login')) {
-    window.location.href = '/#/login';
+  if (!window.location.pathname.startsWith('/login')) {
+    window.location.href = '/login';
   }
 }
 

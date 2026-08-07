@@ -4,7 +4,7 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "dev": "tsx server.ts",
+    "dev": "tsx watch server.ts",
     "build": "pnpm run build:client && pnpm run build:server",
     "build:client": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
@@ -68,7 +68,6 @@
     "@types/supertest": "^7.2.0",
     "@vitest/coverage-v8": "^4.1.0",
     "autoprefixer": "^10.4.21",
-    "better-sqlite3": "^12.11.1",
     "fast-check": "^4.6.0",
     "supertest": "^7.2.2",
     "tailwindcss": "^4.1.14",

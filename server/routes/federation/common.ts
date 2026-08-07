@@ -23,5 +23,5 @@ export async function loadIdp<T = Record<string, unknown>>(
 }
 
 export function loginErrorRedirect(message: string): string {
-  return `/#/login?error=${encodeURIComponent(message)}`;
+  return `/login?error=${encodeURIComponent(message)}`;
 }

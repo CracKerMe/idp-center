@@ -826,7 +826,7 @@ describe.skipIf(skipIfNoDb)('OIDC API Integration', () => {
       expect(secondSid).toBe(firstSid);
     });
 
-    it('GET end_session redirects to the hash-routed confirmation page', async () => {
+    it('GET end_session redirects to the history-routed confirmation page', async () => {
       const { id_token } = await getTokens();
       const payload = jwt.decode(id_token) as any;
 

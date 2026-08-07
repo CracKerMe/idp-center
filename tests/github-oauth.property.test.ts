@@ -1,7 +1,7 @@
 import { describe, it } from 'vitest';
 import * as fc from 'fast-check';
 import crypto from 'crypto';
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 
@@ -71,7 +71,7 @@ describe('Property 2: 授权 URL 完整性', () => {
 // ─── Shared test DB helpers ───────────────────────────────────────────────────
 
 function createTestDb() {
-  const db = new Database(':memory:');
+  const db = new DatabaseSync(':memory:');
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,

@@ -122,7 +122,7 @@ describe.skipIf(skipIfNoDb)('SAML federation ACS', () => {
 
     expect(res.status).toBe(302);
     expect(res.headers.location).not.toContain('evil.com');
-    expect(res.headers.location).toContain('/#/?federation_code=');
+    expect(res.headers.location).toContain('/?federation_code=');
   });
 
   it('rejects an ACS POST with no matching relay state', async () => {

@@ -1,6 +1,3 @@
 ignoredBuiltDependencies:
   - esbuild
   - protobufjs
-
-onlyBuiltDependencies:
-  - better-sqlite3

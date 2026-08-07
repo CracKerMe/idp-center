@@ -96,6 +96,14 @@ export async function startServer() {
     app.use(vite.middlewares);
   } else {
     app.use(express.static('dist'));
+    // History-mode client-side routing: fall back to index.html for any
+    // unmatched GET so deep links (e.g. /dashboard) survive a page refresh.
+    app.get('*', (req, res, next) => {
+      if (req.method !== 'GET' || req.path.startsWith('/api') || req.path.startsWith('/.well-known') || req.path.startsWith('/scim')) {
+        return next();
+      }
+      res.sendFile(path.join(rootDir, 'dist', 'index.html'));
+    });
   }
 
   const server = app.listen(config.PORT, '0.0.0.0', () => {

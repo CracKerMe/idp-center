@@ -3,15 +3,6 @@ FROM node:20-bookworm-slim AS builder
 
 WORKDIR /app
 
-# 安装 better-sqlite3 编译所需工具
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    make \
-    g++ \
-    pkg-config \
-    binutils \
-    && rm -rf /var/lib/apt/lists/*
-
 # 启用 pnpm
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
@@ -34,9 +25,6 @@ RUN pnpm run build && \
     find node_modules -type f \( -name "*.c" -o -name "*.cc" -o -name "*.cpp" -o -name "*.h" -o -name "*.gyp" \) -delete && \
     find node_modules -type d \( -name "test" -o -name "tests" -o -name "__tests__" \) -exec rm -rf {} + 2>/dev/null || true && \
     find node_modules -type d \( -name "example" -o -name "examples" -o -name "docs" \) -exec rm -rf {} + 2>/dev/null || true && \
-    rm -rf node_modules/better-sqlite3/deps node_modules/better-sqlite3/src && \
-    find node_modules/better-sqlite3/build -mindepth 1 -maxdepth 1 ! -name "Release" -exec rm -rf {} + 2>/dev/null || true && \
-    find node_modules/better-sqlite3/build/Release -mindepth 1 -maxdepth 1 ! -name "better_sqlite3.node" -exec rm -rf {} + 2>/dev/null || true && \
     find node_modules -type f -name "LICENSE*" -delete && \
     find node_modules -type f -name "*.tgz" -delete && \
     pnpm store prune

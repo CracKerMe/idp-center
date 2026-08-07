@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link, useNavigate, useSearch } from '@tanstack/react-router';
+import { Link, useSearch } from '@tanstack/react-router';
 import { Shield } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { parseApiResponse, isSuccess, getErrorMessage } from '../utils/fetch';
@@ -9,6 +9,7 @@ import { EmailVerificationResend } from '../components/EmailVerificationResend';
 import { DeviceTrustOptions } from '../components/DeviceTrustOptions';
 import { MfaChallenge } from '../components/MfaChallenge';
 import { SsoProviderButtons } from '../components/SsoProviderButtons';
+import { hardNavigate, isSafeRedirect, setPendingRedirect } from '../utils/post-login-redirect';
 
 export default function Login({ setUser }: { setUser: (user: AuthUser | null) => void }) {
   const [username, setUsername] = useState('');
@@ -22,7 +23,6 @@ export default function Login({ setUser }: { setUser: (user: AuthUser | null) =>
   const [mustChangePassword, setMustChangePassword] = useState(false);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const navigate = useNavigate();
   const searchParams: Record<string, unknown> = useSearch({ strict: false });
   const redirect = typeof searchParams.redirect === 'string' ? searchParams.redirect : undefined;
 
@@ -39,15 +39,16 @@ export default function Login({ setUser }: { setUser: (user: AuthUser | null) =>
     if (data.user?.tenant_id) localStorage.setItem('tenant_id', data.user.tenant_id);
     setUser(data.user ?? null);
 
+    // Every branch below leaves via hardNavigate(): setUser() above has only *scheduled* a
+    // re-render, so a router transition here would still be evaluated against a null user.
     if (data.mfa_enrollment_required) {
-      window.location.href = '/#/profile?setup_mfa=1';
+      // Park the pending target (typically an OAuth /authorize request) so enrolling a
+      // factor resumes it instead of stranding the user on the profile page.
+      setPendingRedirect(redirect);
+      hardNavigate('/profile?setup_mfa=1');
       return;
     }
-    if (redirect && redirect.startsWith('/') && !redirect.startsWith('//')) {
-      window.location.href = '/#' + redirect;
-    } else {
-      navigate({ to: '/' });
-    }
+    hardNavigate(isSafeRedirect(redirect) ? redirect : '/');
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -132,14 +133,14 @@ export default function Login({ setUser }: { setUser: (user: AuthUser | null) =>
       const loginResult = await parseApiResponse<{
         access_token?: string;
         refresh_token?: string;
+        session_id?: string;
         user?: AuthUser;
+        mfa_enrollment_required?: boolean;
       }>(loginRes);
       if (loginResult.code === 0 && loginResult.data) {
-        localStorage.setItem('token', loginResult.data.access_token!);
-        localStorage.setItem('refresh_token', loginResult.data.refresh_token!);
-        if (loginResult.data.user?.tenant_id) localStorage.setItem('tenant_id', loginResult.data.user.tenant_id);
-        setUser(loginResult.data.user ?? null);
-        navigate({ to: '/' });
+        // Same completion path as a normal sign-in, so this branch honours `redirect`
+        // and the MFA-enrollment diversion too.
+        finishLogin(loginResult.data as Parameters<typeof finishLogin>[0]);
       } else {
         setError(loginResult.error || 'Login failed after password change');
       }

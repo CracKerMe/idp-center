@@ -56,7 +56,7 @@ todos:
 ## 技术栈
 
 - **后端框架**: Express + TypeScript
-- **数据库**: better-sqlite3 (SQLite)
+- **数据库**: PostgreSQL + Drizzle ORM（drizzle-orm/postgres-js；已于 pg-support 迁移完成，不再是 SQLite）
 - **验证库**: zod (已有 v4.3.6)
 - **安全中间件**: helmet (需新增)
 - **测试框架**: vitest + @vitest/coverage-v8

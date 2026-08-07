@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { startRegistration } from '@simplewebauthn/browser';
 import { CheckCircle, KeyRound, Mail, ShieldCheck, Smartphone, Trash2 } from 'lucide-react';
 import { authFetch, parseApiResponse, isSuccess, getErrorMessage } from '../utils/fetch';
+import { hardNavigate, takePendingRedirect } from '../utils/post-login-redirect';
 
 interface Factor {
   id: string;
@@ -55,6 +56,18 @@ export function MfaFactorsManager({ userEmail }: { userEmail: string }) {
 
   useEffect(() => { refresh(); }, []);
 
+  /**
+   * Call after any factor is successfully enrolled. If login diverted here because the
+   * tenant's MFA policy demanded enrollment, the request that was interrupted (usually an
+   * OAuth /authorize) was parked — the enrollment requirement is now satisfied, so resume it.
+   */
+  function enrollmentSucceeded(msg: string) {
+    setMessage(msg);
+    refresh();
+    const pending = takePendingRedirect();
+    if (pending) hardNavigate(pending);
+  }
+
   async function handleAddTotp() {
     setError(''); setMessage('');
     const res = await authFetch('/api/user/mfa/totp/setup', { method: 'POST' });
@@ -72,7 +85,7 @@ export function MfaFactorsManager({ userEmail }: { userEmail: string }) {
       body: JSON.stringify({ factorId: result.data.factorId, token }),
     });
     const verifyResult = await parseApiResponse(verifyRes);
-    if (isSuccess(verifyResult)) { setMessage('Authenticator app enabled'); refresh(); }
+    if (isSuccess(verifyResult)) { enrollmentSucceeded('Authenticator app enabled'); }
     else setError(getErrorMessage(verifyResult));
   }
 
@@ -99,9 +112,8 @@ export function MfaFactorsManager({ userEmail }: { userEmail: string }) {
     });
     const result = await parseApiResponse(res);
     if (isSuccess(result)) {
-      setMessage('Email verification enabled');
       setEmailStep('idle'); setEmailCode(''); setEmailFactorId(null);
-      refresh();
+      enrollmentSucceeded('Email verification enabled');
     } else {
       setError(getErrorMessage(result));
     }
@@ -121,7 +133,7 @@ export function MfaFactorsManager({ userEmail }: { userEmail: string }) {
         body: JSON.stringify({ factorId: result.data.factorId, response: attestation }),
       });
       const verifyResult = await parseApiResponse(verifyRes);
-      if (isSuccess(verifyResult)) { setMessage('Security key registered'); refresh(); }
+      if (isSuccess(verifyResult)) { enrollmentSucceeded('Security key registered'); }
       else setError(getErrorMessage(verifyResult));
     } catch (err: any) {
       setError(err?.message || 'Security key registration failed');

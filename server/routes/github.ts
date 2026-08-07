@@ -126,13 +126,13 @@ router.get('/callback', async (req, res) => {
   const { code, state, error: githubError } = req.query as Record<string, string>;
 
   if (!code || !state) {
-    return res.redirect(302, `/#/login?error=${encodeURIComponent('Missing GitHub callback parameters')}`);
+    return res.redirect(302, `/login?error=${encodeURIComponent('Missing GitHub callback parameters')}`);
   }
 
   if (githubError) {
     const errorDesc = githubError === 'access_denied' ? 'GitHub authorization was cancelled' : githubError;
     await logAudit({ req, action: AuditAction.GITHUB_LOGIN_FAILED, details: `GitHub error: ${githubError}` });
-    return res.redirect(302, `/#/login?error=${encodeURIComponent(errorDesc)}`);
+    return res.redirect(302, `/login?error=${encodeURIComponent(errorDesc)}`);
   }
 
   const [stateRecord] = await db
@@ -157,7 +157,7 @@ router.get('/callback', async (req, res) => {
     githubAccessToken = await exchangeGitHubCode(code);
   } catch (err: any) {
     await logAudit({ req, action: AuditAction.GITHUB_LOGIN_FAILED, details: `Token exchange failed: ${err.message}` });
-    return res.redirect(302, `/#/login?error=${encodeURIComponent('Failed to exchange GitHub authorization code')}`);
+    return res.redirect(302, `/login?error=${encodeURIComponent('Failed to exchange GitHub authorization code')}`);
   }
 
   let identity: GitHubIdentity;
@@ -167,7 +167,7 @@ router.get('/callback', async (req, res) => {
     if (verifiedEmail) identity = { ...identity, email: verifiedEmail };
   } catch (err: any) {
     await logAudit({ req, action: AuditAction.GITHUB_LOGIN_FAILED, details: `GitHub user info failed: ${err.message}` });
-    return res.redirect(302, `/#/login?error=${encodeURIComponent('Failed to retrieve GitHub user information')}`);
+    return res.redirect(302, `/login?error=${encodeURIComponent('Failed to retrieve GitHub user information')}`);
   }
 
   let user: any;
@@ -175,7 +175,7 @@ router.get('/callback', async (req, res) => {
     user = await findOrCreateUserFromGitHub(tenantId, identity, githubAccessToken);
   } catch (err: any) {
     await logAudit({ req, action: AuditAction.GITHUB_LOGIN_FAILED, details: `Account linking failed: ${err.message}` });
-    return res.redirect(302, `/#/login?error=${encodeURIComponent('Failed to complete GitHub login')}`);
+    return res.redirect(302, `/login?error=${encodeURIComponent('Failed to complete GitHub login')}`);
   }
 
   const accessToken = await signAccessToken(
@@ -228,7 +228,7 @@ router.get('/callback', async (req, res) => {
     scope: 'github_login',
   });
 
-  return res.redirect(302, `/#/?github_code=${encodeURIComponent(exchangeCode)}&session_id=${encodeURIComponent(sessionId)}`);
+  return res.redirect(302, `/?github_code=${encodeURIComponent(exchangeCode)}&session_id=${encodeURIComponent(sessionId)}`);
 });
 
 // POST /api/auth/github/exchange

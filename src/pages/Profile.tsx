@@ -50,7 +50,7 @@ interface PasswordStrength {
 
 export default function Profile({ user, setUser }: { user: UserInfo; setUser: (user: any) => void }) {
   const navigate = useNavigate();
-  const initialTab = typeof window !== 'undefined' && window.location.hash.includes('setup_mfa=1') ? 'security' : 'profile';
+  const initialTab = typeof window !== 'undefined' && window.location.search.includes('setup_mfa=1') ? 'security' : 'profile';
   const [activeTab, setActiveTab] = useState<'profile' | 'security' | 'sessions'>(initialTab);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');

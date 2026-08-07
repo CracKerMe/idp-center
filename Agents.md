@@ -45,7 +45,7 @@
 | 路径 | 作用 |
 | --- | --- |
 | `src/` | 主应用前端源码 |
-| `src/routes/` | TanStack Router 路由定义（hash 路由） |
+| `src/routes/` | TanStack Router 路由定义（history 路由） |
 | `src/pages/` | 页面组件（含 `src/pages/admin/` 管理后台） |
 | `server/routes/` | HTTP 路由接线（auth/oidc/admin/mfa/scim/user/federation/well-known/health） |
 | `server/oauth/` | OAuth/OIDC 核心逻辑（grant 处理器、令牌签发/校验、DPoP、PAR、动态注册） |
@@ -85,7 +85,7 @@
 
 ## 5. 项目内约定
 
-- 主应用前端使用 hash 路由，不要按 history 路由假设跳转逻辑
+- 主应用前端使用 history 路由（`createBrowserHistory()`），服务端生产环境已配置 SPA fallback（`app.get('*')` → `index.html`），开发环境由 Vite middleware 处理
 - API 成功响应默认 `code = 0`，统一结构见 `server/utils/response.ts`
 - 请求参数校验优先走 `server/validators/` 和 `server/middleware/validate.ts`
 - 新增或修改认证流程时，优先保持以下路径的一致性：

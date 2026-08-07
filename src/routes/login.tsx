@@ -1,5 +1,6 @@
 import { createFileRoute, redirect } from '@tanstack/react-router';
 import Login from '../pages/Login';
+import { isSafeRedirect } from '../utils/post-login-redirect';
 
 export const Route = createFileRoute('/login')({
   validateSearch: (search: Record<string, unknown>): { redirect?: string; error?: string } => {
@@ -11,7 +12,7 @@ export const Route = createFileRoute('/login')({
   beforeLoad: ({ context, search }) => {
     if (context.user) {
       const redirectTo = search.redirect;
-      if (redirectTo && typeof redirectTo === 'string' && redirectTo.startsWith('/') && !redirectTo.startsWith('//')) {
+      if (isSafeRedirect(redirectTo)) {
         throw redirect({ to: redirectTo as any });
       }
       throw redirect({ to: '/' });
