@@ -1,7 +1,17 @@
 # IDP Center 产品架构与演进路线图 (Product Roadmap)
 
-> [!NOTE]
-> 本文档定义了 IDP Center 在安全合规与企业级应用集成方面的早期演进路径（P0 安全基座 + P1 企业整合能力）。**本文档描述的全部能力现已实施完成**，后续更大范围的企业级/AI Native/云原生能力已并入 [ENTERPRISE-OAUTH-IMPLEMENTATION-PLAN.md](../ENTERPRISE-OAUTH-IMPLEMENTATION-PLAN.md) 的四阶段方案（该方案同样已全部实施），本文档保留作为历史背景与 P0/P1 范围的权威记录。
+> [!WARNING]
+> **本文档已归档。** 原始内容已迁移至 [docs/archive/2026-03-product-roadmap.md](archive/2026-03-product-roadmap.md)。
+>
+> 文档中描述的 P0/P1 全部能力已实施完成。后续企业级/AI Native/云原生能力已并入 [ENTERPRISE-OAUTH-IMPLEMENTATION-PLAN.md](../ENTERPRISE-OAUTH-IMPLEMENTATION-PLAN.md) 的四阶段方案（同样已全部实施）。
+>
+> 如需了解当前实施状态，请参阅：
+> - [ENTERPRISE-OAUTH-ANALYSIS-COMPLETE.md](../ENTERPRISE-OAUTH-ANALYSIS-COMPLETE.md) — 企业级差距分析
+> - [ENTERPRISE-OAUTH-IMPLEMENTATION-PLAN.md](../ENTERPRISE-OAUTH-IMPLEMENTATION-PLAN.md) — 四阶段实施方案
+
+---
+
+**以下为原始内容摘要（完整内容见归档版本）：**
 
 ## 1. 业务架构概览
 

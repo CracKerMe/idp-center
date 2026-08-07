@@ -8,13 +8,15 @@
 
 当前仓库包含两类真实交付物：
 
-- 根目录主应用：`React 19 + Vite + TanStack Router + Express + better-sqlite3`
+- 根目录主应用：`React 19 + Vite + TanStack Router + Express + PostgreSQL + Drizzle ORM`
 - `example/` 示例工程：独立的 `Vue 3 + Vite` 对接示例
 
 当前代码行为的主要事实来源如下：
 
+- 环境变量与配置：`server/config.ts`
 - API 与认证行为：`server/routes/`
-- 数据模型与初始化：`server/database.ts`
+- 数据模型与初始化：`server/schema.ts`、`server/database.ts`
+- OAuth/OIDC 核心逻辑：`server/oauth/`
 - 前端路由与登录态恢复：`src/App.tsx`、`src/routes/`
 - 统一响应格式：`server/utils/response.ts`
 - 回归测试：`tests/`

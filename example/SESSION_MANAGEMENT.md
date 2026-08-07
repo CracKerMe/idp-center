@@ -1,8 +1,19 @@
 # Refresh Token 和多设备会话管理功能说明
 
+> [!WARNING]
+> **本文档已归档。** 原始内容已迁移至 [docs/archive/2026-03-session-management-history.md](../docs/archive/2026-03-session-management-history.md)。
+>
+> 原因：文档中引用了 `src/views/Sessions.vue`、`src/stores/auth.ts`、`axios` 拦截器等文件或结构，但当前 `example/` 目录并不存在这些实现。
+>
+> 文档描述的功能已在主应用中实现（见 `server/routes/user.ts`、`server/schema.ts`），但 example/ 的接入示例尚未完成。
+
+---
+
+**以下为原始内容摘要（完整内容见归档版本）：**
+
 ## 📋 功能概览
 
-本次更新为 IdP Center 添加了完整的 **Refresh Token 机制** 和 **多设备会话管理** 功能。
+主应用已实现完整的 **Refresh Token 机制** 和 **多设备会话管理** 功能。
 
 ## 🎯 核心改进
 

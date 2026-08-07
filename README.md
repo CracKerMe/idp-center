@@ -18,14 +18,16 @@
 
 ## 📄 文档地图
 
-- **本文档**：项目简介、启动方式、最短部署路径
+- **本文档**：项目简介、核心能力、API 概览
+- **[STARTUP.md](STARTUP.md)**：**启动帮助文档** — 从零到运行的完整指引、环境变量详解、常见问题排查
 - [ENTERPRISE-OAUTH-ANALYSIS-COMPLETE.md](ENTERPRISE-OAUTH-ANALYSIS-COMPLETE.md) — 企业级差距分析与当前实施状态
 - [ENTERPRISE-OAUTH-IMPLEMENTATION-PLAN.md](ENTERPRISE-OAUTH-IMPLEMENTATION-PLAN.md) — 四阶段可实施方案（表结构、函数签名、排期约束）
+- [AGENTS.md](AGENTS.md) — 面向 AI 协作者/新贡献者的仓库事实基线
 - [docs/operations/deployment.md](docs/operations/deployment.md) — 数据库迁移/Redis/多副本选主/风险引擎与 LLM 辅助上线检查表
-- [Agents.md](Agents.md) — 面向 AI 协作者/新贡献者的仓库事实基线
 - [docs/documentation-archive-guideline.md](docs/documentation-archive-guideline.md) — 文档分层与归档规范
-- [docs/PRODUCT_ROADMAP.md](docs/PRODUCT_ROADMAP.md) — 早期 P0/P1 路线图（已并入上述四阶段方案）
 - [deploy/helm/idp-center/README.md](deploy/helm/idp-center/README.md) — Kubernetes/Helm 部署前置条件
+
+> 📁 已归档文档见 [docs/archive/](docs/archive/)，包括早期路线图（`PRODUCT_ROADMAP.md`）和历史会话管理说明（`SESSION_MANAGEMENT.md`）。
 
 ---
 
