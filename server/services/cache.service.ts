@@ -7,6 +7,12 @@ export interface CacheService {
   del(key: string): Promise<void>;
   /** Atomically increments key, setting ttlSec on the *first* increment only. Returns the new count. */
   incr(key: string, ttlSec: number): Promise<number>;
+  /**
+   * Atomically reads and deletes key in one step. Needed for one-time-use tokens
+   * (e.g. captcha pass tokens) — a separate get() then del() has a race where two
+   * concurrent requests can both read the value before either deletes it.
+   */
+  getdel(key: string): Promise<string | null>;
 }
 
 class MemoryCache implements CacheService {
@@ -42,6 +48,14 @@ class MemoryCache implements CacheService {
     const next = parseInt(entry.value, 10) + 1;
     entry.value = String(next);
     return next;
+  }
+
+  async getdel(key: string): Promise<string | null> {
+    // No await between the read and the delete, so this is atomic with respect
+    // to other async handlers on the same event loop.
+    const value = await this.get(key);
+    this.store.delete(key);
+    return value;
   }
 
   /** Drops expired entries so a long-running single instance doesn't leak memory. */
@@ -80,6 +94,11 @@ class RedisCache implements CacheService {
     `;
     const result = await this.redis.eval(script, 1, key, ttlSec);
     return Number(result);
+  }
+
+  async getdel(key: string): Promise<string | null> {
+    // GETDEL is atomic server-side (Redis >=6.2, exposed by ioredis natively).
+    return this.redis.getdel(key);
   }
 }
 

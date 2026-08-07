@@ -22,9 +22,30 @@ export const loginSchema = z.object({
   otp: commonSchemas.otp.optional(),
   remember_me: z.boolean().optional(),
   trust_device: z.boolean().optional(),
+  captcha_pass: z.string().optional(),
 });
 
 export type LoginInput = z.infer<typeof loginSchema>;
+
+// Captcha challenge schema
+export const captchaChallengeSchema = z.object({
+  username: z.string().min(1, 'Username is required'),
+});
+
+export type CaptchaChallengeInput = z.infer<typeof captchaChallengeSchema>;
+
+// Captcha verify schema
+export const captchaVerifySchema = z.object({
+  challenge_id: z.string().min(1),
+  x: z.number(),
+  trail: z
+    .array(z.object({ x: z.number(), y: z.number(), t: z.number() }))
+    .min(1)
+    .max(200),
+  input_mode: z.enum(['pointer', 'keyboard']),
+});
+
+export type CaptchaVerifyInput = z.infer<typeof captchaVerifySchema>;
 
 // OTP setup schema
 export const otpSetupSchema = z.object({});

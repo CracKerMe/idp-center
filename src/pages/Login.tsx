@@ -9,6 +9,7 @@ import { EmailVerificationResend } from '../components/EmailVerificationResend';
 import { DeviceTrustOptions } from '../components/DeviceTrustOptions';
 import { MfaChallenge } from '../components/MfaChallenge';
 import { SsoProviderButtons } from '../components/SsoProviderButtons';
+import { SliderCaptcha } from '../components/SliderCaptcha';
 import { hardNavigate, isSafeRedirect, setPendingRedirect } from '../utils/post-login-redirect';
 
 export default function Login({ setUser }: { setUser: (user: AuthUser | null) => void }) {
@@ -23,6 +24,7 @@ export default function Login({ setUser }: { setUser: (user: AuthUser | null) =>
   const [mustChangePassword, setMustChangePassword] = useState(false);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [captchaRequired, setCaptchaRequired] = useState(false);
   const searchParams: Record<string, unknown> = useSearch({ strict: false });
   const redirect = typeof searchParams.redirect === 'string' ? searchParams.redirect : undefined;
 
@@ -51,8 +53,7 @@ export default function Login({ setUser }: { setUser: (user: AuthUser | null) =>
     hardNavigate(isSafeRedirect(redirect) ? redirect : '/');
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const doLogin = async (overrideCaptchaPass?: string) => {
     setError('');
 
     const res = await fetch('/api/auth/login', {
@@ -63,6 +64,7 @@ export default function Login({ setUser }: { setUser: (user: AuthUser | null) =>
         password,
         remember_me: rememberMe,
         trust_device: trustDevice,
+        captcha_pass: overrideCaptchaPass,
       }),
     });
 
@@ -80,13 +82,18 @@ export default function Login({ setUser }: { setUser: (user: AuthUser | null) =>
     const { data, code, error: apiError } = result;
 
     if (code === 0) {
+      setCaptchaRequired(false);
       finishLogin(data as any);
     } else if (code === 'AUTH_MFA_REQUIRED' && data?.mfa_token && data?.factors) {
+      setCaptchaRequired(false);
       setMfaToken(data.mfa_token);
       setMfaFactors(data.factors);
     } else if (code === 'PASSWORD_EXPIRED' && data?.must_change_password) {
+      setCaptchaRequired(false);
       setMustChangePassword(true);
       setError('');
+    } else if (code === 'CAPTCHA_REQUIRED') {
+      setCaptchaRequired(true);
     } else {
       const errorMessages: Record<string, string> = {
         ACCOUNT_NOT_VERIFIED: 'Your email has not been verified. Please check your inbox for a verification link.',
@@ -99,6 +106,11 @@ export default function Login({ setUser }: { setUser: (user: AuthUser | null) =>
       setEmailNotVerified(code === 'ACCOUNT_NOT_VERIFIED');
       setError(errorMessages[code as string] || apiError || 'Login failed');
     }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await doLogin();
   };
 
   const handleChangePassword = async (e: React.FormEvent) => {
@@ -260,6 +272,19 @@ export default function Login({ setUser }: { setUser: (user: AuthUser | null) =>
                 </button>
               </div>
             </div>
+          ) : captchaRequired ? (
+            <SliderCaptcha
+              username={username}
+              onSuccess={(pass) => {
+                // The puzzle's job ends here — close it immediately rather than
+                // leaving it mounted (still showing its "verified" state) while
+                // the login attempt itself plays out, which may fail for an
+                // unrelated reason (e.g. the password was also wrong).
+                setCaptchaRequired(false);
+                doLogin(pass);
+              }}
+              onCancel={() => setCaptchaRequired(false)}
+            />
           ) : (
           <form className="space-y-6" onSubmit={handleSubmit}>
             <AnimatePresence initial={false}>
@@ -334,8 +359,8 @@ export default function Login({ setUser }: { setUser: (user: AuthUser | null) =>
           </form>
           )}
 
-          {!mustChangePassword && !mfaToken && <GithubOAuthButton redirect={redirect} />}
-          {!mustChangePassword && !mfaToken && (
+          {!mustChangePassword && !mfaToken && !captchaRequired && <GithubOAuthButton redirect={redirect} />}
+          {!mustChangePassword && !mfaToken && !captchaRequired && (
             <SsoProviderButtons
               redirect={redirect}
               onLdapSuccess={(data) => finishLogin(data as any)}
@@ -343,7 +368,7 @@ export default function Login({ setUser }: { setUser: (user: AuthUser | null) =>
             />
           )}
 
-          {!mustChangePassword && !mfaToken && (
+          {!mustChangePassword && !mfaToken && !captchaRequired && (
           <div className="mt-6">
             <div className="relative">
               <div className="absolute inset-0 flex items-center">

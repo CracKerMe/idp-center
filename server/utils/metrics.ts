@@ -165,6 +165,42 @@ export const uebaSessionRevocations = new Counter({
   registers: [register],
 });
 
+// ─── Captcha Metrics (滑块拼图验证) ──────────────────────────────────────────
+
+export const captchaChallengesIssued = new Counter({
+  name: 'idp_captcha_challenges_issued_total',
+  help: 'Total slide-puzzle captcha challenges issued',
+  labelNames: ['tenant_id'],
+  registers: [register],
+});
+
+export const captchaVerifications = new Counter({
+  name: 'idp_captcha_verifications_total',
+  help: 'Total slide-puzzle captcha verification attempts',
+  labelNames: ['outcome', 'tenant_id'], // outcome: success|invalid|expired
+  registers: [register],
+});
+
+export const captchaTriggered = new Counter({
+  name: 'idp_captcha_triggered_total',
+  help: 'Total logins that crossed the captcha failure threshold',
+  labelNames: ['mode', 'tenant_id'], // mode: shadow|enforce
+  registers: [register],
+});
+
+export const captchaFailOpen = new Counter({
+  name: 'idp_captcha_failopen_total',
+  help: 'Total requests where the captcha guard failed open due to a cache error',
+  registers: [register],
+});
+
+export const captchaGenerationDuration = new Histogram({
+  name: 'idp_captcha_generation_duration_seconds',
+  help: 'Duration of procedural puzzle image generation and PNG encoding',
+  buckets: [0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.25],
+  registers: [register],
+});
+
 // ─── Helper Functions ───────────────────────────────────────────────────────
 
 /**

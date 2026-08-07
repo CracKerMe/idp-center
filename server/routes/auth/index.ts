@@ -6,6 +6,7 @@ import sessionRouter from './session.js';
 import passwordRouter from './password.js';
 import emailRouter from './email.js';
 import federationRouter from './federation.js';
+import captchaRouter from './captcha.js';
 
 const router = express.Router();
 
@@ -16,5 +17,6 @@ router.use('/', sessionRouter);
 router.use('/', passwordRouter);
 router.use('/', emailRouter);
 router.use('/', federationRouter);
+router.use('/', captchaRouter);
 
 export default router;

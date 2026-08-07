@@ -54,6 +54,11 @@ const EnvSchema = z.object({
   RISK_ENGINE_MODE: z.enum(['off', 'shadow', 'enforce']).default('off'),
   GEOIP_DB_PATH: z.string().optional(),   // path to a local MaxMind GeoLite2-City.mmdb; unset disables geo signals
 
+  // Slide-puzzle captcha on /login, gated behind repeated password failures for the
+  // same ip+username (see server/services/captcha.service.ts). 'off' skips it entirely;
+  // 'shadow' scores/counts but never actually challenges a real client; 'enforce' gates.
+  CAPTCHA_MODE: z.enum(['off', 'shadow', 'enforce']).default('off'),
+
   // Phase 3.3: LLM-assisted admin tooling (audit summaries, policy drafts, compliance gap
   // checks). Entirely optional — every ai-assist endpoint 501s when this is unset.
   ANTHROPIC_API_KEY: z.string().optional(),
@@ -98,6 +103,19 @@ export const TOKEN_CONFIG = {
   refreshTokenRememberMeMs: 30 * 24 * 60 * 60 * 1000,
   trustedDeviceExpiryDays: 30,
   trustedDeviceExpiryMs: 30 * 24 * 60 * 60 * 1000,
+} as const;
+
+/** Slide-puzzle captcha tuning — see server/services/captcha.service.ts */
+export const CAPTCHA_CONFIG = {
+  triggerThreshold: 2,        // consecutive password failures (same ip+username) before a captcha is required
+  failCounterTtlSec: 600,     // window during which failures accumulate
+  challengeTtlSec: 120,       // how long an issued puzzle stays solvable
+  maxVerifyAttempts: 3,       // guesses allowed against a single challenge before it's burned
+  passTokenTtlSec: 120,       // how long a solved captcha_pass token is honored by /login
+  tolerancePx: 6,             // allowed |submittedX - pieceX| for a pass
+  canvasWidth: 320,
+  canvasHeight: 160,
+  pieceSize: 44,
 } as const;
 
 /** MFA-specific timing/format constants */

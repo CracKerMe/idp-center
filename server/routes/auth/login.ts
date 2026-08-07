@@ -15,10 +15,12 @@ import { assessLoginRisk, recordLoginEvent } from '../../services/risk.service.j
 import { logger } from '../../utils/logger.js';
 import { computeDeviceFingerprint } from '../../utils/device-fingerprint.js';
 import { rateLimit } from '../../middleware/rate-limit.js';
+import { captchaGuard } from '../../middleware/captcha-guard.js';
 import { users, accountDeletionRequests, trustedDevices } from '../../schema.js';
 import { eq, and, gt } from 'drizzle-orm';
 import { loginSchema } from '../../validators/auth.validator.js';
 import { completeLogin } from './common.js';
+import { recordLoginFailure, clearLoginFailures, loginIdentity } from '../../services/captcha.service.js';
 
 const router = express.Router();
 
@@ -30,15 +32,19 @@ const loginRateLimit = rateLimit({
 });
 
 // POST /api/auth/login
-router.post('/login', loginRateLimit, validate({ body: loginSchema }), async (req, res) => {
+router.post('/login', loginRateLimit, validate({ body: loginSchema }), captchaGuard, async (req, res) => {
   const { username, password, remember_me, trust_device } = req.body;
   const tenantId = req.tenantId;
+  const captchaIdentity = loginIdentity(req.ip || 'unknown', tenantId, username);
 
   const [user] = await db.select().from(users).where(and(eq(users.username, username), eq(users.tenantId, tenantId))).limit(1);
 
   if (!user) {
     await logAudit({ req, action: AuditAction.LOGIN_FAILED, details: `Failed login for ${username}`, tenantId: tenantId });
     loginAttempts.inc({ outcome: 'fail', method: 'password', tenant_id: tenantId });
+    if (config.CAPTCHA_MODE !== 'off') {
+      recordLoginFailure(captchaIdentity).catch((err) => logger.warn(`recordLoginFailure failed: ${err.message}`));
+    }
     return res.status(401).json(error('Invalid credentials', ErrorCode.AUTH_INVALID_CREDENTIALS));
   }
 
@@ -72,10 +78,16 @@ router.post('/login', loginRateLimit, validate({ body: loginSchema }), async (re
       userId: user.id, tenantId, outcome: 'fail',
       ip: req.ip || req.connection.remoteAddress || 'unknown', userAgent: req.get('User-Agent') || '',
     }).catch((err) => logger.warn(`recordLoginEvent failed: ${err.message}`));
+    if (config.CAPTCHA_MODE !== 'off') {
+      recordLoginFailure(captchaIdentity).catch((err) => logger.warn(`recordLoginFailure failed: ${err.message}`));
+    }
     return res.status(401).json(error('Invalid credentials', ErrorCode.AUTH_INVALID_CREDENTIALS));
   }
 
   await db.update(users).set({ failedLoginAttempts: 0, lockedUntil: null }).where(eq(users.id, user.id));
+  if (config.CAPTCHA_MODE !== 'off') {
+    clearLoginFailures(captchaIdentity).catch((err) => logger.warn(`clearLoginFailures failed: ${err.message}`));
+  }
 
   if (!user.emailVerified && !user.isAdmin) {
     return res.status(403).json(error('Email not verified', ErrorCode.ACCOUNT_NOT_VERIFIED));
