@@ -238,7 +238,7 @@ router.patch('/Users/:id', requireScimScope('scim:write'), async (req, res) => {
 });
 
 // DELETE /scim/v2/Users/:id — deactivates rather than hard-deletes, consistent with the
-// rest of the system (server/routes/admin.ts does the same for admin-initiated deletes).
+// rest of the system (server/routes/admin/users.ts does the same for admin-initiated deletes).
 router.delete('/Users/:id', requireScimScope('scim:write'), async (req, res) => {
   const [u] = await db.select({ id: users.id }).from(users).where(and(eq(users.id, req.params.id), eq(users.tenantId, req.tenantId))).limit(1);
   if (!u) return scimError(res, 404, 'User not found');

@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 import type { Request, Response } from 'express';
 import { eq, and } from 'drizzle-orm';
 import { db } from '../database.js';
@@ -94,6 +95,10 @@ export async function handleRegister(req: Request, res: Response) {
   const clientId = crypto.randomBytes(16).toString('hex');
   const issueSecret = authMethod !== 'none';
   const clientSecret = issueSecret ? crypto.randomBytes(32).toString('hex') : '';
+  // Hashed up front so the secret never has a plaintext-only window before first token request
+  // (client_secret column stays populated only because it's NOT NULL; verifyClientSecret always
+  // prefers the hash — see client-auth.ts).
+  const clientSecretHash = issueSecret ? await bcrypt.hash(clientSecret, 10) : null;
   const registrationAccessToken = crypto.randomBytes(32).toString('hex');
 
   const clientName = typeof req.body?.client_name === 'string' && req.body.client_name.trim() ? req.body.client_name.trim() : clientId;
@@ -105,6 +110,8 @@ export async function handleRegister(req: Request, res: Response) {
     id: crypto.randomUUID(),
     clientId,
     clientSecret,
+    clientSecretHash: clientSecretHash ?? undefined,
+    clientSecretAlg: clientSecretHash ? 'bcrypt' : undefined,
     clientName,
     redirectUris: JSON.stringify(redirectUris),
     grantTypes: JSON.stringify(grantTypes),

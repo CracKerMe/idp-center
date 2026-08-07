@@ -136,8 +136,8 @@ export async function confirmTotpSetup(userId: string, factorId: string, token: 
 /**
  * Backfills users.otp_secret/otp_enabled (pre-2.1 plaintext TOTP) into encrypted mfa_factors
  * rows, idempotently. Called once from initDatabase() on every startup — cheap no-op once
- * every legacy user has been migrated. The legacy columns stay populated in parallel for one
- * release window (plan §2.1); routes/auth.ts's /otp/setup and /otp/verify keep both in sync.
+ * every legacy user has been migrated. New setups (routes/auth/mfa.ts's /otp/setup) no longer
+ * write users.otp_secret at all — only this one-time backfill still reads it.
  */
 export async function migrateLegacyTotpFactors(): Promise<number> {
   const legacyUsers = await db.select({ id: users.id, otpSecret: users.otpSecret })

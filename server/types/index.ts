@@ -149,7 +149,7 @@ export interface JwtUserPayload {
   username: string;
   is_admin: boolean;
   tenant_id: string;
-  /** Browser session id — embedded at login (server/routes/auth.ts completeLogin) */
+  /** Browser session id — embedded at login (server/routes/auth/common.ts completeLogin) */
   bsid?: string;
   /** RFC 8176 auth method references, e.g. ['pwd'] or ['pwd','otp'] */
   amr?: string[];

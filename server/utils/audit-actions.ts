@@ -1,6 +1,6 @@
 /**
  * Canonical audit action names. Before this existed, actions were a mix of SCREAMING_SNAKE
- * (most of the codebase) and admin_snake_case (server/routes/admin.ts only) — that split
+ * (most of the codebase) and admin_snake_case (server/routes/admin/* only) — that split
  * made filtering/reporting on "all admin actions" or exporting a consistent CSV needlessly
  * hard. Every logAudit() call site should reference one of these constants rather than a
  * string literal.
