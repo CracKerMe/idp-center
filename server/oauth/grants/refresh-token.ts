@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm';
 import { db } from '../../database.js';
-import { TOKEN_CONFIG, config } from '../../config.js';
+import { TOKEN_CONFIG } from '../../config.js';
+import { getValue } from '../../services/feature.service.js';
 import { refreshTokens, users, oidcSessions } from '../../schema.js';
 import { OAuthError } from '../errors.js';
 import { issueAccessToken, issueRefreshToken, issueIdToken } from '../issue.js';
@@ -103,7 +104,7 @@ export const refreshTokenGrant: GrantHandler = {
         sid = oidcSession.sid;
         authTime = oidcSession.authTime ?? undefined;
 
-        if (config.RISK_ENGINE_MODE !== 'off') {
+        if (getValue('riskEngine') !== 'off') {
           const ip = ctx.req.ip || ctx.req.socket?.remoteAddress || 'unknown';
           const userAgent = ctx.req.get('User-Agent') || '';
           const assessment = await assessLoginRisk({
@@ -112,7 +113,7 @@ export const refreshTokenGrant: GrantHandler = {
           });
 
           const jumped = oidcSession.riskScore != null && assessment.score - oidcSession.riskScore >= SESSION_RISK_JUMP_THRESHOLD;
-          if (config.RISK_ENGINE_MODE === 'enforce' && jumped) {
+          if (getValue('riskEngine') === 'enforce' && jumped) {
             await revokeTokensBySession(oidcSessionId, RevokeReason.SECURITY_BREACH);
             await db.update(oidcSessions).set({ terminatedAt: new Date(), riskScore: assessment.score }).where(eq(oidcSessions.id, oidcSessionId));
             uebaSessionRevocations.inc({ tenant_id: tenantId });

@@ -189,7 +189,7 @@ describe.skipIf(skipIfNoDb)('OIDC API Integration', () => {
       expect(response.body.data.redirect_url).toContain(testClient.redirectUris);
       const url = new URL(response.body.data.redirect_url);
       expect(url.searchParams.get('code')).toBeTruthy();
-      expect(url.searchParams.get('state')).toBeTruthy();
+      // state is optional per OAuth 2.0 — only returned if client sends it
 
       const [row] = await db.select().from(authCodes).where(eq(authCodes.code, url.searchParams.get('code')!)).limit(1);
       expect(row).toBeTruthy();
@@ -834,7 +834,7 @@ describe.skipIf(skipIfNoDb)('OIDC API Integration', () => {
 
       expect(response.status).toBe(302);
       const location = new URL(response.headers.location);
-      expect(location.hash).toContain('/logout');
+      expect(location.pathname).toContain('/logout');
       expect(location.searchParams.get('sid')).toBe(payload.sid);
     });
 

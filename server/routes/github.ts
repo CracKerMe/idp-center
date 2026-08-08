@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { db } from '../database.js';
 import { config, TOKEN_CONFIG } from '../config.js';
+import { isEnabled } from '../services/feature.service.js';
 import { logAudit } from '../utils/audit.js';
 import { AuditAction } from '../utils/audit-actions.js';
 import { generateOAuthState } from '../services/crypto.js';
@@ -89,8 +90,7 @@ async function findOrCreateUserFromGitHub(tenantId: string, identity: GitHubIden
 
 // GET /api/auth/github/config
 router.get('/config', (req, res) => {
-  const enabled = !!(config.GITHUB_CLIENT_ID && config.GITHUB_CLIENT_SECRET);
-  res.json(success({ enabled }));
+  res.json(success({ enabled: isEnabled('githubSso') }));
 });
 
 // GET /api/auth/github — initiate authorization
@@ -98,7 +98,7 @@ router.get('/', async (req, res) => {
   const clientId = config.GITHUB_CLIENT_ID;
   const clientSecret = config.GITHUB_CLIENT_SECRET;
 
-  if (!clientId || !clientSecret) {
+  if (!isEnabled('githubSso') || !clientId || !clientSecret) {
     return res.status(503).json(error('GitHub OAuth is not configured', ErrorCode.SERVICE_UNAVAILABLE));
   }
 

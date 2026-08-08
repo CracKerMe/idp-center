@@ -1,7 +1,7 @@
 import express from 'express';
 import crypto from 'crypto';
 import { db } from '../../database.js';
-import { config } from '../../config.js';
+import { getValue } from '../../services/feature.service.js';
 import { logAudit } from '../../utils/audit.js';
 import { AuditAction } from '../../utils/audit-actions.js';
 import { authenticateAdmin, authenticatePlatformAdmin } from '../../middleware/auth.js';
@@ -103,7 +103,7 @@ router.get('/risk/dashboard', authenticateAdmin, async (req, res) => {
   }
 
   res.json(success({
-    mode: config.RISK_ENGINE_MODE,
+    mode: getValue('riskEngine'),
     outcomes: Object.fromEntries(outcomeCounts.map((r) => [r.outcome, r.n])),
     topRiskyUsers: topUsers,
     signalDistribution: signalCounts,

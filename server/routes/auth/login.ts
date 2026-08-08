@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { db } from '../../database.js';
 import { config, SECURITY_CONFIG, MFA_CONFIG } from '../../config.js';
+import { getValue } from '../../services/feature.service.js';
 import { logAudit } from '../../utils/audit.js';
 import { AuditAction } from '../../utils/audit-actions.js';
 import { isPasswordExpired } from '../../services/password-policy.service.js';
@@ -43,7 +44,7 @@ router.post('/login', loginRateLimit, validate({ body: loginSchema }), captchaGu
   if (!user) {
     await logAudit({ req, action: AuditAction.LOGIN_FAILED, details: `Failed login for ${username}`, tenantId: tenantId });
     loginAttempts.inc({ outcome: 'fail', method: 'password', tenant_id: tenantId });
-    if (config.CAPTCHA_MODE !== 'off') {
+    if (getValue('captcha') !== 'off') {
       recordLoginFailure(captchaIdentity).catch((err) => logger.warn(`recordLoginFailure failed: ${err.message}`));
     }
     return res.status(401).json(error('Invalid credentials', ErrorCode.AUTH_INVALID_CREDENTIALS));
@@ -93,14 +94,14 @@ router.post('/login', loginRateLimit, validate({ body: loginSchema }), captchaGu
       metadata: { ip: failIp, userAgent: failUa, requestId: (req as any).requestId },
     }).catch((err: any) => logger.warn(`EventBus emit failed: ${err.message}`));
 
-    if (config.CAPTCHA_MODE !== 'off') {
+    if (getValue('captcha') !== 'off') {
       recordLoginFailure(captchaIdentity).catch((err) => logger.warn(`recordLoginFailure failed: ${err.message}`));
     }
     return res.status(401).json(error('Invalid credentials', ErrorCode.AUTH_INVALID_CREDENTIALS));
   }
 
   await db.update(users).set({ failedLoginAttempts: 0, lockedUntil: null }).where(eq(users.id, user.id));
-  if (config.CAPTCHA_MODE !== 'off') {
+  if (getValue('captcha') !== 'off') {
     clearLoginFailures(captchaIdentity).catch((err) => logger.warn(`clearLoginFailures failed: ${err.message}`));
   }
 
@@ -145,7 +146,7 @@ router.post('/login', loginRateLimit, validate({ body: loginSchema }), captchaGu
   // RISK_ENGINE_MODE=off; in 'shadow' the score/action are computed and recorded but never
   // change the response — only 'enforce' lets risk_policies actually gate the login.
   const riskAssessment = await assessLoginRisk({ userId: user.id, tenantId, ip, userAgent, deviceFingerprint });
-  const riskEnforced = config.RISK_ENGINE_MODE === 'enforce';
+  const riskEnforced = getValue('riskEngine') === 'enforce';
 
   if (riskEnforced && riskAssessment.action === 'deny') {
     await logAudit({

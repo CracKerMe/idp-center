@@ -2,12 +2,24 @@ import express from 'express';
 import { config } from '../config.js';
 import { publishJwks } from '../services/keys.service.js';
 import { jwksRequests } from '../utils/metrics.js';
+import { isEnabled } from '../services/feature.service.js';
 
 const router = express.Router();
 
 // GET /.well-known/openid-configuration
 router.get('/openid-configuration', (req, res) => {
   const issuer = config.APP_URL;
+  const deviceFlowOn = isEnabled('deviceFlow');
+  const dcrOn = isEnabled('dynamicClientRegistration');
+
+  const grantTypesSupported = [
+    'authorization_code',
+    'refresh_token',
+    'client_credentials',
+    ...(deviceFlowOn ? ['urn:ietf:params:oauth:grant-type:device_code'] : []),
+    'urn:ietf:params:oauth:grant-type:token-exchange',
+  ];
+
   res.json({
     issuer,
     authorization_endpoint: `${issuer}/api/oidc/authorize`,
@@ -16,20 +28,14 @@ router.get('/openid-configuration', (req, res) => {
     jwks_uri: `${issuer}/.well-known/jwks.json`,
     introspection_endpoint: `${issuer}/api/oidc/introspect`,
     revocation_endpoint: `${issuer}/api/oidc/revoke`,
-    device_authorization_endpoint: `${issuer}/api/oidc/device_authorization`,
+    ...(deviceFlowOn ? { device_authorization_endpoint: `${issuer}/api/oidc/device_authorization` } : {}),
     end_session_endpoint: `${issuer}/api/oidc/end_session`,
     pushed_authorization_request_endpoint: `${issuer}/api/oidc/par`,
     require_pushed_authorization_requests: false,
-    registration_endpoint: `${issuer}/api/oidc/register`,
+    ...(dcrOn ? { registration_endpoint: `${issuer}/api/oidc/register` } : {}),
     dpop_signing_alg_values_supported: ['RS256', 'ES256'],
     response_types_supported: ['code'],
-    grant_types_supported: [
-      'authorization_code',
-      'refresh_token',
-      'client_credentials',
-      'urn:ietf:params:oauth:grant-type:device_code',
-      'urn:ietf:params:oauth:grant-type:token-exchange',
-    ],
+    grant_types_supported: grantTypesSupported,
     scopes_supported: ['openid', 'profile', 'email', 'roles', 'groups', 'scim:read', 'scim:write'],
     id_token_signing_alg_values_supported: ['RS256'],
     userinfo_signing_alg_values_supported: ['none'],

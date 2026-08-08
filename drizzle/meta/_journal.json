@@ -15,6 +15,13 @@
       "when": 1786121887852,
       "tag": "0001_alerts_health_autoheal",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786122126617,
+      "tag": "0002_curious_the_executioner",
+      "breakpoints": true
     }
   ]
 }

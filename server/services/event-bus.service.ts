@@ -36,7 +36,8 @@ export type EventType =
   | 'risk.alert.triggered'
   | 'system.key.rotated'
   | 'system.job.completed'
-  | 'system.health.degraded';
+  | 'system.health.degraded'
+  | 'system.feature.changed';
 
 export interface DomainEvent {
   id: string;

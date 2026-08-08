@@ -105,6 +105,10 @@ export const AuditAction = {
   AI_POLICY_DRAFT_APPLIED: 'AI_POLICY_DRAFT_APPLIED',
   AI_AUDIT_SUMMARY_GENERATED: 'AI_AUDIT_SUMMARY_GENERATED',
   AI_COMPLIANCE_CHECK_GENERATED: 'AI_COMPLIANCE_CHECK_GENERATED',
+
+  // Feature flags
+  FEATURE_FLAG_UPDATED: 'FEATURE_FLAG_UPDATED',
+  FEATURE_FLAG_RESET: 'FEATURE_FLAG_RESET',
 } as const;
 
 export type AuditActionName = typeof AuditAction[keyof typeof AuditAction];
@@ -117,6 +121,7 @@ export const PRIVILEGED_ACTIONS: readonly AuditActionName[] = [
   AuditAction.ADMIN_CLIENT_SECRET_ROTATE, AuditAction.TENANT_CREATE, AuditAction.TENANT_UPDATE,
   AuditAction.TENANT_DELETE, AuditAction.ADMIN_SESSION_REVOKED, AuditAction.IP_WHITELIST_ADDED,
   AuditAction.IP_WHITELIST_REMOVED, AuditAction.IDP_CREATED, AuditAction.IDP_UPDATED, AuditAction.IDP_DELETED,
+  AuditAction.FEATURE_FLAG_UPDATED, AuditAction.FEATURE_FLAG_RESET,
 ];
 
 /** Actions that represent an anomaly/security-relevant event — used by the compliance report. */

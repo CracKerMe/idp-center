@@ -8,6 +8,7 @@ import sessionsRouter from './sessions.js';
 import idpsRouter from './idps.js';
 import riskRouter from './risk.js';
 import aiRouter from './ai.js';
+import featuresRouter from './features.js';
 
 const router = express.Router();
 
@@ -20,5 +21,6 @@ router.use('/', sessionsRouter);
 router.use('/', idpsRouter);
 router.use('/', riskRouter);
 router.use('/', aiRouter);
+router.use('/', featuresRouter);
 
 export default router;

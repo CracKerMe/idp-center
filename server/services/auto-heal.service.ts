@@ -4,7 +4,7 @@ import { db } from '../database.js';
 import { autoHealLog } from '../schema/events.js';
 import { runHealthCheck, persistHealthCheck, type HealthCheckResult, type HealthCheckItem } from './health-checker.service.js';
 import { createAlert } from './alert.service.js';
-import { config } from '../config.js';
+import { isEnabled } from './feature.service.js';
 import { logger } from '../utils/logger.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -171,9 +171,9 @@ async function executeAction(rule: HealRule, result: HealthCheckResult): Promise
 
 /** Main auto-heal loop — called by scheduler every AUTO_HEAL_TICK_INTERVAL_MS */
 export async function autoHealTick(): Promise<void> {
-  // Check if auto-heal is enabled via config
-  if (!config.AUTO_HEAL_ENABLED) {
-    logger.debug('Auto-heal is disabled via AUTO_HEAL_ENABLED=false');
+  // Check if auto-heal is enabled via the feature toggle system
+  if (!isEnabled('autoHeal')) {
+    logger.debug('Auto-heal is disabled via the autoHeal feature flag');
     return;
   }
 

@@ -12,6 +12,7 @@ import { users, mfaFactors } from '../schema.js';
 import { eq, and } from 'drizzle-orm';
 import * as mfaService from '../services/mfa.service.js';
 import { rateLimit } from '../middleware/rate-limit.js';
+import { featureGate } from '../middleware/feature-gate.js';
 
 const router = express.Router();
 
@@ -31,7 +32,7 @@ router.get('/factors', authenticateToken, async (req, res) => {
 
 // --- TOTP ---
 
-router.post('/totp/setup', authenticateToken, async (req, res) => {
+router.post('/totp/setup', authenticateToken, featureGate('mfa'), async (req, res) => {
   const [user] = await db.select().from(users).where(eq(users.id, req.user!.id)).limit(1);
   const result = await mfaService.beginTotpSetup(req.user!.id, user!.username);
   res.json(success(result));
@@ -49,7 +50,7 @@ router.post('/totp/verify', authenticateToken, validate({ body: z.object({ facto
 
 // --- Email OTP ---
 
-router.post('/email/setup', authenticateToken, otpSendRateLimit, validate({ body: z.object({ email: commonSchemas.email.optional() }) }), async (req, res) => {
+router.post('/email/setup', authenticateToken, featureGate('mfa'), otpSendRateLimit, validate({ body: z.object({ email: commonSchemas.email.optional() }) }), async (req, res) => {
   const [user] = await db.select().from(users).where(eq(users.id, req.user!.id)).limit(1);
   const email = req.body.email || user!.email;
   const result = await mfaService.beginEmailFactorSetup(req.user!.id, email, user!.username);
@@ -68,7 +69,7 @@ router.post('/email/verify', authenticateToken, validate({ body: z.object({ fact
 
 // --- SMS OTP ---
 
-router.post('/sms/setup', authenticateToken, otpSendRateLimit, validate({ body: z.object({ phone: z.string().min(5).max(20) }) }), async (req, res) => {
+router.post('/sms/setup', authenticateToken, featureGate('mfa'), otpSendRateLimit, validate({ body: z.object({ phone: z.string().min(5).max(20) }) }), async (req, res) => {
   const [user] = await db.select().from(users).where(eq(users.id, req.user!.id)).limit(1);
   const result = await mfaService.beginSmsFactorSetup(req.user!.id, req.body.phone, user!.username);
   res.json(success({ factorId: result.factorId, phone: req.body.phone }));
@@ -86,7 +87,7 @@ router.post('/sms/verify', authenticateToken, validate({ body: z.object({ factor
 
 // --- WebAuthn ---
 
-router.post('/webauthn/register/options', authenticateToken, async (req, res) => {
+router.post('/webauthn/register/options', authenticateToken, featureGate('mfa'), async (req, res) => {
   const [user] = await db.select().from(users).where(eq(users.id, req.user!.id)).limit(1);
   const { factorId, options } = await mfaService.beginWebauthnRegistration(req.user!.id, user!.username);
   res.json(success({ factorId, options }));

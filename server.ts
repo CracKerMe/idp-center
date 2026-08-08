@@ -19,8 +19,10 @@ import federationRouter from './server/routes/federation/index.js';
 import healthRouter from './server/routes/health.js';
 import eventsRouter from './server/routes/events.js';
 import operationsRouter from './server/routes/operations.js';
+import featuresPublicRouter from './server/routes/features-public.js';
 import { eventBus } from './server/services/event-bus.service.js';
 import { registerAlertRules } from './server/services/alert.service.js';
+import * as featureService from './server/services/feature.service.js';
 import { logger } from './server/utils/logger.js';
 import { sql } from 'drizzle-orm';
 
@@ -63,6 +65,7 @@ app.use(express.json());
 
 // Health & Metrics endpoints (before tenant context - these are global)
 app.use(healthRouter);
+app.use('/api/features', featuresPublicRouter);
 
 app.use('/api', tenantContext);
 app.use('/api', ipWhitelistGuard);
@@ -96,6 +99,8 @@ app.use('/api/ops', operationsRouter);
 
 export async function startServer() {
   await initDatabase();
+  await featureService.loadFlags();
+  featureService.startPeriodicResync();
 
   if (config.NODE_ENV !== 'production') {
     const vite = await createViteServer({
@@ -128,6 +133,7 @@ export async function startServer() {
   // Graceful shutdown: stop consumer and flush Redis before exit
   const shutdown = async () => {
     logger.info('Shutting down...');
+    featureService.stopPeriodicResync();
     await eventBus.stopConsumer();
     server.close();
   };

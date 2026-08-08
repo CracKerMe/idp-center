@@ -3,6 +3,7 @@ import { eq, and, desc, sql } from 'drizzle-orm';
 import { db } from '../database.js';
 import { alerts } from '../schema/events.js';
 import { config } from '../config.js';
+import { isEnabled } from './feature.service.js';
 import { eventBus, type DomainEvent, type EventType } from './event-bus.service.js';
 import { logger } from '../utils/logger.js';
 
@@ -248,6 +249,8 @@ const ALERT_RULES: AlertRule[] = [
 export function registerAlertRules(): void {
   for (const rule of ALERT_RULES) {
     eventBus.on(rule.eventType, async (event: DomainEvent) => {
+      if (!isEnabled('alert')) return;
+
       // Extract severity/category from payload if overridden
       const severity = (event.payload.severity as AlertSeverity) ?? rule.severity;
       const category = (event.payload.category as AlertCategory) ?? rule.category;

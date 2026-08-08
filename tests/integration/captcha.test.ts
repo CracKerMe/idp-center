@@ -15,7 +15,8 @@ import {
   linkedAccounts,
   passwordResets,
 } from '../../server/schema.js';
-import { config, CAPTCHA_CONFIG } from '../../server/config.js';
+import { CAPTCHA_CONFIG } from '../../server/config.js';
+import { setFlagForTests, resetFeatureSnapshotForTests } from '../../server/services/feature.service.js';
 
 vi.mock('../../server/services/email.service.js', () => ({
   emailService: {
@@ -78,14 +79,12 @@ async function solveChallenge(username: string): Promise<string> {
 }
 
 describe.skipIf(skipIfNoDb)('Captcha-gated login (integration)', () => {
-  const originalMode = config.CAPTCHA_MODE;
-
   beforeAll(async () => {
     await initDatabase();
   });
 
   afterEach(async () => {
-    (config as any).CAPTCHA_MODE = originalMode;
+    resetFeatureSnapshotForTests();
     const testUsers = db.select({ id: users.id }).from(users).where(like(users.username, 'captcha\\_%'));
     await db.delete(passwordHistory).where(inArray(passwordHistory.userId, testUsers));
     await db.delete(accountDeletionRequests).where(inArray(accountDeletionRequests.userId, testUsers));
@@ -100,12 +99,12 @@ describe.skipIf(skipIfNoDb)('Captcha-gated login (integration)', () => {
   });
 
   afterAll(() => {
-    (config as any).CAPTCHA_MODE = originalMode;
+    resetFeatureSnapshotForTests();
   });
 
   describe('CAPTCHA_MODE=enforce', () => {
     beforeEach(() => {
-      (config as any).CAPTCHA_MODE = 'enforce';
+      setFlagForTests('captcha', 'enforce');
     });
 
     it('requires a captcha only after crossing the failure threshold, and gates before the DB user lookup', async () => {
@@ -205,7 +204,7 @@ describe.skipIf(skipIfNoDb)('Captcha-gated login (integration)', () => {
 
   describe('CAPTCHA_MODE=off', () => {
     beforeEach(() => {
-      (config as any).CAPTCHA_MODE = 'off';
+      setFlagForTests('captcha', 'off');
     });
 
     it('never blocks login regardless of failure count', async () => {
@@ -227,7 +226,7 @@ describe.skipIf(skipIfNoDb)('Captcha-gated login (integration)', () => {
 
   describe('CAPTCHA_MODE=shadow', () => {
     beforeEach(() => {
-      (config as any).CAPTCHA_MODE = 'shadow';
+      setFlagForTests('captcha', 'shadow');
     });
 
     it('crosses the threshold but never returns CAPTCHA_REQUIRED to the client', async () => {

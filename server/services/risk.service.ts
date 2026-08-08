@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { and, eq, desc, gte, sql } from 'drizzle-orm';
 import { db } from '../database.js';
 import { loginEvents, userBehaviorBaselines, riskPolicies } from '../schema.js';
-import { config } from '../config.js';
+import { getValue } from './feature.service.js';
 import { lookupGeo, haversineKm } from './geoip.service.js';
 import { logger } from '../utils/logger.js';
 import { riskAssessments, riskScoreHistogram } from '../utils/metrics.js';
@@ -92,7 +92,7 @@ export async function assessLoginRisk(input: AssessLoginRiskInput): Promise<Risk
   let isNewCountry = false;
   let impossibleTravelKmh: number | null = null;
 
-  if (config.RISK_ENGINE_MODE === 'off') {
+  if (getValue('riskEngine') === 'off') {
     return { score: 0, signals, action: 'allow', isNewDevice, isNewCountry, impossibleTravelKmh, country: null, asn: null };
   }
 
@@ -171,7 +171,7 @@ export async function assessLoginRisk(input: AssessLoginRiskInput): Promise<Risk
   const action = await resolveAction(input.tenantId, score);
 
   riskScoreHistogram.observe({ tenant_id: input.tenantId }, score);
-  riskAssessments.inc({ action, mode: config.RISK_ENGINE_MODE, tenant_id: input.tenantId });
+  riskAssessments.inc({ action, mode: getValue('riskEngine'), tenant_id: input.tenantId });
 
   // Emit risk scored event for real-time consumers
   eventBus.emit({
@@ -230,7 +230,7 @@ export interface RecordLoginEventInput {
 }
 
 export async function recordLoginEvent(input: RecordLoginEventInput): Promise<void> {
-  if (config.RISK_ENGINE_MODE === 'off') return;
+  if (getValue('riskEngine') === 'off') return;
 
   const now = new Date();
   await db.insert(loginEvents).values({

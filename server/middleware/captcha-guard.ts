@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { config } from '../config.js';
+import { getValue } from '../services/feature.service.js';
 import { error, ErrorCode } from '../utils/response.js';
 import { isCaptchaRequired, consumeCaptchaPass, loginIdentity } from '../services/captcha.service.js';
 import { captchaTriggered, captchaFailOpen } from '../utils/metrics.js';
@@ -18,7 +18,7 @@ import { logger } from '../utils/logger.js';
  * fail-open path is counted so ops see a live bypass window immediately.
  */
 export async function captchaGuard(req: Request, res: Response, next: NextFunction) {
-  if (config.CAPTCHA_MODE === 'off') return next();
+  if (getValue('captcha') === 'off') return next();
 
   const tenantId = req.tenantId || 'default';
   const identity = loginIdentity(req.ip || 'unknown', tenantId, req.body?.username || '');
@@ -27,7 +27,7 @@ export async function captchaGuard(req: Request, res: Response, next: NextFuncti
     const required = await isCaptchaRequired(identity);
     if (!required) return next();
 
-    if (config.CAPTCHA_MODE === 'shadow') {
+    if (getValue('captcha') === 'shadow') {
       captchaTriggered.inc({ mode: 'shadow', tenant_id: tenantId });
       return next();
     }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, Outlet, useNavigate, useLocation } from '@tanstack/react-router';
-import { Shield, Users, Key, Activity, LogOut, ArrowLeft, Building, BarChart3, Menu, X, Link2, ShieldAlert, Bell, Wrench } from 'lucide-react';
+import { Shield, Users, Key, Activity, LogOut, ArrowLeft, Building, BarChart3, Menu, X, Link2, ShieldAlert, Bell, Wrench, ToggleLeft } from 'lucide-react';
 import { clsx } from 'clsx';
 import { AnimatePresence, motion } from 'motion/react';
 import { authFetch } from '../utils/fetch';
@@ -61,6 +61,7 @@ export default function AdminLayout({ user, setUser }: { user: any, setUser: (us
     { name: 'Risk Dashboard', href: '/admin/risk', icon: ShieldAlert },
     { name: 'Alerts', href: '/admin/alerts', icon: Bell },
     { name: 'Operations', href: '/admin/operations', icon: Wrench },
+    { name: 'Feature Flags', href: '/admin/features', icon: ToggleLeft },
     { name: 'Audit Logs', href: '/admin/audit', icon: Activity },
   ];
 

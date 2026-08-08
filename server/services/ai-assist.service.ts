@@ -3,6 +3,7 @@ import { and, gte, eq, desc } from 'drizzle-orm';
 import { db } from '../database.js';
 import { auditLogs, loginEvents, tenants, tenantPasswordPolicies, tenantIpWhitelist, tenantMfaPolicies } from '../schema.js';
 import { config } from '../config.js';
+import { isEnabled } from './feature.service.js';
 import { redactPII, redactObject } from '../utils/redact.js';
 import { logger } from '../utils/logger.js';
 
@@ -23,7 +24,7 @@ function getClient(): Anthropic | null {
 }
 
 export function isAiAssistEnabled(): boolean {
-  return getClient() !== null;
+  return getClient() !== null && isEnabled('aiAssist');
 }
 
 export class AiAssistDisabledError extends Error {

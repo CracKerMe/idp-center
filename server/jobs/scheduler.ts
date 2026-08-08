@@ -5,6 +5,8 @@ import { runUebaBaselineJob } from './ueba.job.js';
 import { autoHealTick } from '../services/auto-heal.service.js';
 import { cleanupHealthHistory } from '../services/health-checker.service.js';
 import { config } from '../config.js';
+import { isEnabled } from '../services/feature.service.js';
+import type { FeatureKey } from '../features/registry.js';
 import { logger } from '../utils/logger.js';
 
 interface ScheduledJob {
@@ -13,19 +15,22 @@ interface ScheduledJob {
   lockId: number;
   intervalMs: number;
   run: () => Promise<unknown>;
+  /** Checked on every tick (not just at registration), so toggling is hot — no restart needed. */
+  featureKey?: FeatureKey;
 }
 
 const JOBS: ScheduledJob[] = [
   // Token/key/device-code cleanup, key rotation, back-channel drain, audit retention purge
-  // — all bundled inside cleanupExpiredTokens() already (server/utils/cleanup.ts).
+  // — all bundled inside cleanupExpiredTokens() already (server/utils/cleanup.ts). Core
+  // hygiene — no feature toggle, must never stop.
   { name: 'cleanup', lockId: 726420001, intervalMs: 60 * 60 * 1000, run: cleanupExpiredTokens },
   // UEBA baseline recompute (implementation plan §3.2) — nightly full pass; risk.service.ts's
   // updateBaseline() keeps baselines fresh incrementally between runs.
-  { name: 'ueba-baseline', lockId: 726420002, intervalMs: 24 * 60 * 60 * 1000, run: runUebaBaselineJob },
+  { name: 'ueba-baseline', lockId: 726420002, intervalMs: 24 * 60 * 60 * 1000, run: runUebaBaselineJob, featureKey: 'uebaBaseline' },
   // Auto-heal health check and remediation
-  { name: 'auto-heal', lockId: 726420003, intervalMs: config.AUTO_HEAL_TICK_INTERVAL_MS, run: autoHealTick },
+  { name: 'auto-heal', lockId: 726420003, intervalMs: config.AUTO_HEAL_TICK_INTERVAL_MS, run: autoHealTick, featureKey: 'autoHeal' },
   // Health history retention cleanup
-  { name: 'health-history-cleanup', lockId: 726420004, intervalMs: 24 * 60 * 60 * 1000, run: cleanupHealthHistory },
+  { name: 'health-history-cleanup', lockId: 726420004, intervalMs: 24 * 60 * 60 * 1000, run: cleanupHealthHistory, featureKey: 'healthChecker' },
 ];
 
 /**
@@ -37,6 +42,7 @@ const JOBS: ScheduledJob[] = [
  * automatically on COMMIT/ROLLBACK, so a crash mid-job can't leave it stuck held.
  */
 async function runIfLeader(job: ScheduledJob): Promise<void> {
+  if (job.featureKey && !isEnabled(job.featureKey)) return;
   try {
     await db.transaction(async (tx) => {
       const [row] = await tx.execute(sql`select pg_try_advisory_xact_lock(${job.lockId}) as locked`) as any;

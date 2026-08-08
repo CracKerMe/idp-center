@@ -22,6 +22,7 @@ import { handleRegister, handleRegistrationRead, handleRegistrationUpdate, handl
 import { getUserRoleNames, getUserGroupNames } from '../services/rbac.service.js';
 import { tokenIssued } from '../utils/metrics.js';
 import { rateLimit } from '../middleware/rate-limit.js';
+import { featureGate } from '../middleware/feature-gate.js';
 
 const router = express.Router();
 
@@ -319,11 +320,12 @@ router.post('/revoke', handleRevoke);
 // POST /api/oidc/par — RFC 9126 Pushed Authorization Requests
 router.post('/par', handlePar);
 
-// RFC 7591/7592 dynamic client registration — gated per-tenant, see dynamic-registration.ts
-router.post('/register', handleRegister);
-router.get('/register/:client_id', handleRegistrationRead);
-router.put('/register/:client_id', handleRegistrationUpdate);
-router.delete('/register/:client_id', handleRegistrationDelete);
+// RFC 7591/7592 dynamic client registration — gated per-tenant (dynamic-registration.ts) AND
+// by the global dynamicClientRegistration feature flag.
+router.post('/register', featureGate('dynamicClientRegistration', 404), handleRegister);
+router.get('/register/:client_id', featureGate('dynamicClientRegistration', 404), handleRegistrationRead);
+router.put('/register/:client_id', featureGate('dynamicClientRegistration', 404), handleRegistrationUpdate);
+router.delete('/register/:client_id', featureGate('dynamicClientRegistration', 404), handleRegistrationDelete);
 
 const deviceAuthRateLimit = rateLimit({ name: 'device_authorization', limit: 20, windowSec: 60 });
 // Low limit + per-session (not per-IP) key: a low-entropy user_code is guessable, so wrong
@@ -336,7 +338,7 @@ const deviceVerifyRateLimit = rateLimit({
 });
 
 // POST /api/oidc/device_authorization
-router.post('/device_authorization', deviceAuthRateLimit, async (req, res) => {
+router.post('/device_authorization', featureGate('deviceFlow', 404), deviceAuthRateLimit, async (req, res) => {
   try {
     const client = await authenticateClient(req);
     assertGrantAllowed(client.grantTypes, 'urn:ietf:params:oauth:grant-type:device_code', client.clientId);
@@ -388,7 +390,7 @@ router.post('/device_authorization', deviceAuthRateLimit, async (req, res) => {
 });
 
 // GET /api/oidc/device/verify
-router.get('/device/verify', authenticateToken, deviceVerifyRateLimit, async (req, res) => {
+router.get('/device/verify', featureGate('deviceFlow', 404), authenticateToken, deviceVerifyRateLimit, async (req, res) => {
   const userCode = normalizeUserCode(typeof req.query.user_code === 'string' ? req.query.user_code : '');
   const tenantId = req.tenantId;
 
@@ -407,7 +409,7 @@ router.get('/device/verify', authenticateToken, deviceVerifyRateLimit, async (re
 });
 
 // POST /api/oidc/device/approve
-router.post('/device/approve', authenticateToken, async (req, res) => {
+router.post('/device/approve', featureGate('deviceFlow', 404), authenticateToken, async (req, res) => {
   const userCode = normalizeUserCode(req.body?.user_code || '');
   const tenantId = req.tenantId;
 
@@ -426,7 +428,7 @@ router.post('/device/approve', authenticateToken, async (req, res) => {
 });
 
 // POST /api/oidc/device/deny
-router.post('/device/deny', authenticateToken, async (req, res) => {
+router.post('/device/deny', featureGate('deviceFlow', 404), authenticateToken, async (req, res) => {
   const userCode = normalizeUserCode(req.body?.user_code || '');
   const tenantId = req.tenantId;
 

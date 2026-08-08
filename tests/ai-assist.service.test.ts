@@ -37,11 +37,21 @@ describe('ai-assist.service', () => {
         this.messages = { create: messagesCreate };
       }),
     }));
+    // ai-assist.service.js composes isAiAssistEnabled() with feature.service.js's isEnabled(),
+    // which imports event-bus.service.js — a real re-import on every vi.resetModules() would
+    // re-run that module's top-level prom-client Counter registration and collide with the
+    // still-registered metrics from the previous reset (prom-client's default registry is a
+    // process-wide singleton, not cleared by resetModules). Stub feature.service.js instead —
+    // this suite only cares about the ANTHROPIC_API_KEY-driven behavior, not the flag system.
+    vi.doMock('../server/services/feature.service.js', () => ({
+      isEnabled: () => true,
+    }));
   });
 
   afterEach(() => {
     vi.doUnmock('@anthropic-ai/sdk');
     vi.doUnmock('../server/config.js');
+    vi.doUnmock('../server/services/feature.service.js');
   });
 
   it('isAiAssistEnabled() is false when ANTHROPIC_API_KEY is unset', async () => {
