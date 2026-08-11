@@ -6,6 +6,7 @@ import { authCodes, users, oidcSessions, accessTokens, refreshTokens } from '../
 import { OAuthError } from '../errors.js';
 import { issueAccessToken, issueRefreshToken, issueIdToken } from '../issue.js';
 import { verifyDpopProof } from '../dpop.js';
+import { isEnabled } from '../../services/feature.service.js';
 import { RevokeReason } from '../../utils/token-blacklist.js';
 import type { GrantContext, GrantHandler, TokenResponse } from '../types.js';
 
@@ -93,8 +94,10 @@ export const authorizationCodeGrant: GrantHandler = {
       : undefined;
 
     // RFC 9449: presence of a DPoP header opts this issuance into DPoP binding.
-    // A proof that fails verification throws before any token is issued.
-    const jkt = ctx.req.headers['dpop'] ? await verifyDpopProof(ctx.req) : undefined;
+    // A proof that fails verification throws before any token is issued. Gated
+    // by the `dpop` feature flag — off by default, so a DPoP header is ignored
+    // and every token is issued as a plain Bearer token until enabled.
+    const jkt = isEnabled('dpop') && ctx.req.headers['dpop'] ? await verifyDpopProof(ctx.req) : undefined;
 
     const scope = authCode.scope || 'openid';
     const authCtx = { amr: oidcSession?.amr, acr: oidcSession?.acr };

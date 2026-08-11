@@ -36,9 +36,17 @@
 ### 🔑 核心认证（阶段 0-1）
 - 注册 / 登录 / 登出 / 密码重置 / 邮箱验证，强密码策略 + 历史密码限制 + 定期轮换
 - **RS256 + JWKS + 密钥轮换**（`/.well-known/jwks.json`，90 天轮换，HS256 兼容窗口已下线）
-- 授权码 + PKCE、**client_credentials**、**device_code**（RFC 8628）、**token_exchange**（RFC 8693）
-- `/introspect`（RFC 7662）、`/revoke`（RFC 7009）、动态客户端注册（RFC 7591/7592）、PAR（RFC 9126）、DPoP（RFC 9449）
+- 授权码 + PKCE、**client_credentials**、**device_code**（RFC 8628）
+- `/introspect`（RFC 7662）、`/revoke`（RFC 7009）
 - OIDC 会话串联、RP-initiated / front-channel / back-channel 登出
+- *自用部署：以上功能默认开启，满足 SSO 场景需求*
+
+### 🔧 可选企业能力（默认关闭，按需开启）
+- **token_exchange**（RFC 8693）、**PAR**（RFC 9126）、**DPoP**（RFC 9449）
+- **client_secret_jwt** / **private_key_jwt** 客户端认证
+- **动态客户端注册**（RFC 7591/7592）
+- **设备码流程**（RFC 8628）—— 仅在需要无浏览器设备登录时开启
+- *以上功能通过 feature flags 管理（管理后台热切换，无需重启），详见 [docs/operations/feature-flags.md](docs/operations/feature-flags.md)*
 
 ### 🏢 企业级功能（阶段 2）
 - **MFA**：TOTP、Email OTP、SMS OTP（阿里云/腾讯云/Console）、WebAuthn/FIDO2、恢复码，`acr`/`amr` step-up

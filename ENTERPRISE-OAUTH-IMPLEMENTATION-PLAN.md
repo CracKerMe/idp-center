@@ -6,6 +6,14 @@
 
 **明确排除**：社交登录扩展（Google/微信/钉钉等）。现有 GitHub 登录保留不动，但第二阶段会把它抽象成通用 IdP 框架 —— 后续接社交登录只是加配置，不在本方案交付范围内。
 
+**自用部署姿态（gate, don't delete）**：本方案功能远超自用需求，因此采用"关闭暴露面，不删代码"的原则。以下功能默认关闭，通过 feature flags 管理（管理后台热切换，无需重启）：
+- Token Exchange（RFC 8693）
+- Pushed Authorization Requests（RFC 9126）
+- DPoP（RFC 9449）
+- Client Secret JWT / Private Key JWT 认证
+
+多租户、SAML/LDAP/OIDC-RP 联邦、SCIM 等结构性功能保留代码但冻结产品投入，以默认 `'default'` 租户运行。详见 `docs/operations/feature-flags.md` 的"自用最小运行时基线"章节。
+
 三个已确认的技术前提：
 1. **数据层走 `origin/pg-support` 分支**：该分支已完成 better-sqlite3 → Drizzle ORM + PostgreSQL 的全量迁移（`server/schema.ts` + `drizzle.config.ts` + `db:push/generate/migrate` 脚本），本方案所有新表都在它之上增量。
 2. **引入 RS256 + 真实 JWKS + 密钥轮换**，HS256 保留一个兼容窗口后移除。

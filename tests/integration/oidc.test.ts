@@ -27,6 +27,7 @@ import {
   pushedAuthRequests,
   dpopJtis,
 } from '../../server/schema.js';
+import { setFlagForTests, resetFeatureSnapshotForTests } from '../../server/services/feature.service.js';
 
 vi.mock('../../server/services/email.service.js', () => ({
   emailService: {
@@ -870,6 +871,14 @@ describe.skipIf(skipIfNoDb)('OIDC API Integration', () => {
   });
 
   describe('client_secret_jwt authentication', () => {
+    beforeEach(() => {
+      setFlagForTests('clientSecretJwt', true);
+    });
+
+    afterEach(() => {
+      resetFeatureSnapshotForTests();
+    });
+
     function buildAssertion(secret: string, overrides: Record<string, any> = {}) {
       return jwt.sign(
         {
@@ -973,8 +982,13 @@ describe.skipIf(skipIfNoDb)('OIDC API Integration', () => {
     };
 
     beforeEach(async () => {
+      setFlagForTests('tokenExchange', true);
       await db.delete(clients).where(eq(clients.clientId, exchangeClient.clientId));
       await db.insert(clients).values(exchangeClient);
+    });
+
+    afterEach(() => {
+      resetFeatureSnapshotForTests();
     });
 
     async function getSubjectToken() {
@@ -1143,7 +1157,12 @@ describe.skipIf(skipIfNoDb)('OIDC API Integration', () => {
   });
 
   describe('pushed authorization requests (RFC 9126)', () => {
+    beforeEach(() => {
+      setFlagForTests('par', true);
+    });
+
     afterEach(async () => {
+      resetFeatureSnapshotForTests();
       await db.delete(pushedAuthRequests).where(eq(pushedAuthRequests.clientId, testClient.clientId));
     });
 
@@ -1226,7 +1245,12 @@ describe.skipIf(skipIfNoDb)('OIDC API Integration', () => {
   });
 
   describe('DPoP-bound tokens (RFC 9449)', () => {
+    beforeEach(() => {
+      setFlagForTests('dpop', true);
+    });
+
     afterEach(async () => {
+      resetFeatureSnapshotForTests();
       await db.delete(dpopJtis);
     });
 

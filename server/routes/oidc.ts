@@ -23,6 +23,8 @@ import { getUserRoleNames, getUserGroupNames } from '../services/rbac.service.js
 import { tokenIssued } from '../utils/metrics.js';
 import { rateLimit } from '../middleware/rate-limit.js';
 import { featureGate } from '../middleware/feature-gate.js';
+import { isEnabled } from '../services/feature.service.js';
+import { TOKEN_EXCHANGE_GRANT_TYPE } from '../oauth/grants/token-exchange.js';
 
 const router = express.Router();
 
@@ -221,6 +223,13 @@ router.post('/token', tokenRateLimit, async (req, res) => {
     const grantType = req.body?.grant_type;
     if (!grantType) throw new OAuthError('invalid_request', 400, 'grant_type is required');
 
+    // Gated grant types behave as if unregistered when their flag is off — same
+    // error as an unknown grant_type, so a disabled feature isn't discoverable
+    // via a distinct error response.
+    if (grantType === TOKEN_EXCHANGE_GRANT_TYPE && !isEnabled('tokenExchange')) {
+      throw new OAuthError('unsupported_grant_type', 400);
+    }
+
     const handler = grantRegistry[grantType];
     if (!handler) throw new OAuthError('unsupported_grant_type', 400);
 
@@ -318,7 +327,7 @@ router.post('/introspect', handleIntrospect);
 router.post('/revoke', handleRevoke);
 
 // POST /api/oidc/par — RFC 9126 Pushed Authorization Requests
-router.post('/par', handlePar);
+router.post('/par', featureGate('par', 404), handlePar);
 
 // RFC 7591/7592 dynamic client registration — gated per-tenant (dynamic-registration.ts) AND
 // by the global dynamicClientRegistration feature flag.

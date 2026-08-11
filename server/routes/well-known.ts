@@ -11,13 +11,18 @@ router.get('/openid-configuration', (req, res) => {
   const issuer = config.APP_URL;
   const deviceFlowOn = isEnabled('deviceFlow');
   const dcrOn = isEnabled('dynamicClientRegistration');
+  const tokenExchangeOn = isEnabled('tokenExchange');
+  const parOn = isEnabled('par');
+  const dpopOn = isEnabled('dpop');
+  const clientSecretJwtOn = isEnabled('clientSecretJwt');
+  const privateKeyJwtOn = isEnabled('privateKeyJwt');
 
   const grantTypesSupported = [
     'authorization_code',
     'refresh_token',
     'client_credentials',
     ...(deviceFlowOn ? ['urn:ietf:params:oauth:grant-type:device_code'] : []),
-    'urn:ietf:params:oauth:grant-type:token-exchange',
+    ...(tokenExchangeOn ? ['urn:ietf:params:oauth:grant-type:token-exchange'] : []),
   ];
 
   res.json({
@@ -30,10 +35,9 @@ router.get('/openid-configuration', (req, res) => {
     revocation_endpoint: `${issuer}/api/oidc/revoke`,
     ...(deviceFlowOn ? { device_authorization_endpoint: `${issuer}/api/oidc/device_authorization` } : {}),
     end_session_endpoint: `${issuer}/api/oidc/end_session`,
-    pushed_authorization_request_endpoint: `${issuer}/api/oidc/par`,
-    require_pushed_authorization_requests: false,
+    ...(parOn ? { pushed_authorization_request_endpoint: `${issuer}/api/oidc/par`, require_pushed_authorization_requests: false } : {}),
     ...(dcrOn ? { registration_endpoint: `${issuer}/api/oidc/register` } : {}),
-    dpop_signing_alg_values_supported: ['RS256', 'ES256'],
+    ...(dpopOn ? { dpop_signing_alg_values_supported: ['RS256', 'ES256'] } : {}),
     response_types_supported: ['code'],
     grant_types_supported: grantTypesSupported,
     scopes_supported: ['openid', 'profile', 'email', 'roles', 'groups', 'scim:read', 'scim:write'],
@@ -42,9 +46,21 @@ router.get('/openid-configuration', (req, res) => {
     request_object_signing_alg_values_supported: ['RS256'],
     code_challenge_methods_supported: ['S256', 'plain'],
     subject_types_supported: ['public'],
-    token_endpoint_auth_methods_supported: ['client_secret_post', 'client_secret_basic', 'client_secret_jwt', 'private_key_jwt'],
-    introspection_endpoint_auth_methods_supported: ['client_secret_post', 'client_secret_basic', 'client_secret_jwt', 'private_key_jwt'],
-    revocation_endpoint_auth_methods_supported: ['client_secret_post', 'client_secret_basic', 'client_secret_jwt', 'private_key_jwt'],
+    token_endpoint_auth_methods_supported: [
+      'client_secret_post', 'client_secret_basic',
+      ...(clientSecretJwtOn ? ['client_secret_jwt'] : []),
+      ...(privateKeyJwtOn ? ['private_key_jwt'] : []),
+    ],
+    introspection_endpoint_auth_methods_supported: [
+      'client_secret_post', 'client_secret_basic',
+      ...(clientSecretJwtOn ? ['client_secret_jwt'] : []),
+      ...(privateKeyJwtOn ? ['private_key_jwt'] : []),
+    ],
+    revocation_endpoint_auth_methods_supported: [
+      'client_secret_post', 'client_secret_basic',
+      ...(clientSecretJwtOn ? ['client_secret_jwt'] : []),
+      ...(privateKeyJwtOn ? ['private_key_jwt'] : []),
+    ],
     token_endpoint_auth_signing_alg_values_supported: ['HS256', 'RS256', 'ES256'],
     frontchannel_logout_supported: true,
     frontchannel_logout_session_supported: true,

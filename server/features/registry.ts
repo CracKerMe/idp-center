@@ -120,6 +120,36 @@ export const FEATURE_REGISTRY = {
     description: 'RFC 7591 动态客户端注册总开关；关闭后对所有租户生效，即使租户设置里单独启用了 dynamicClientRegistration 也不可用。',
     effect: 'immediate', implemented: true, envDefault: () => true,
   },
+  tokenExchange: {
+    type: 'boolean', category: 'auth', categoryLabel: '认证能力',
+    label: 'Token Exchange',
+    description: 'RFC 8693 token-exchange 授权类型。关闭后 /token 拒绝该 grant_type，且不在 discovery 文档中声明。默认关闭，供自用部署收敛暴露面；对外服务时再开启。',
+    effect: 'immediate', implemented: true, envDefault: () => false,
+  },
+  par: {
+    type: 'boolean', category: 'auth', categoryLabel: '认证能力',
+    label: 'Pushed Authorization Requests',
+    description: 'RFC 9126 PAR 端点。关闭后 POST /api/oidc/par 返回未启用，且不在 discovery 文档中声明。默认关闭，供自用部署收敛暴露面；对外服务时再开启。',
+    effect: 'immediate', implemented: true, envDefault: () => false,
+  },
+  dpop: {
+    type: 'boolean', category: 'auth', categoryLabel: '认证能力',
+    label: 'DPoP',
+    description: 'RFC 9449 DPoP 令牌绑定。关闭后忽略客户端发来的 DPoP 头，一律签发普通 Bearer 令牌，且不在 discovery 文档中声明支持的签名算法。默认关闭，供自用部署收敛暴露面；对外服务时再开启。',
+    effect: 'immediate', implemented: true, envDefault: () => false,
+  },
+  clientSecretJwt: {
+    type: 'boolean', category: 'auth', categoryLabel: '认证能力',
+    label: 'Client Secret JWT',
+    description: '客户端使用 HS256 JWT 进行客户端认证（client_secret_jwt）。关闭后拒绝该认证方法，且不在 discovery 文档中声明。默认关闭，供自用部署收敛暴露面；对外服务时再开启。',
+    effect: 'immediate', implemented: true, envDefault: () => false,
+  },
+  privateKeyJwt: {
+    type: 'boolean', category: 'auth', categoryLabel: '认证能力',
+    label: 'Private Key JWT',
+    description: '客户端使用 RS256/ES256 JWT 进行客户端认证（private_key_jwt）。关闭后拒绝该认证方法，且不在 discovery 文档中声明。默认关闭，供自用部署收敛暴露面；对外服务时再开启。',
+    effect: 'immediate', implemented: true, envDefault: () => false,
+  },
   aiAssist: {
     type: 'boolean', category: 'ai', categoryLabel: 'AI 辅助',
     label: 'AI 辅助管理工具',

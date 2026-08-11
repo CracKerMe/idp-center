@@ -3,6 +3,7 @@ import { parseList } from '../client-auth.js';
 import { OAuthError } from '../errors.js';
 import { issueClientAccessToken } from '../issue.js';
 import { verifyDpopProof } from '../dpop.js';
+import { isEnabled } from '../../services/feature.service.js';
 import type { GrantContext, GrantHandler, TokenResponse } from '../types.js';
 
 export const clientCredentialsGrant: GrantHandler = {
@@ -23,7 +24,7 @@ export const clientCredentialsGrant: GrantHandler = {
     }
     const scope = grantedScopes.join(' ');
 
-    const jkt = ctx.req.headers['dpop'] ? await verifyDpopProof(ctx.req) : undefined;
+    const jkt = isEnabled('dpop') && ctx.req.headers['dpop'] ? await verifyDpopProof(ctx.req) : undefined;
     const { token: accessToken } = await issueClientAccessToken(client.clientId, scope, tenantId, jkt ? { jkt } : undefined);
 
     return {

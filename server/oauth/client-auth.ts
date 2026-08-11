@@ -7,6 +7,7 @@ import { db } from '../database.js';
 import { config } from '../config.js';
 import { clients, clientAssertionJtis } from '../schema.js';
 import { OAuthError } from './errors.js';
+import { isEnabled } from '../services/feature.service.js';
 import type { AuthenticatedClient, ClientAuthMethod } from './types.js';
 
 const CLIENT_ASSERTION_TYPE = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
@@ -111,6 +112,11 @@ async function authenticateViaClientAssertion(req: Request, tenantId: string): P
     throw new OAuthError('invalid_request', 400, 'client_assertion is required');
   }
 
+  // Gated: client_secret_jwt and private_key_jwt must be enabled
+  if (!isEnabled('clientSecretJwt') && !isEnabled('privateKeyJwt')) {
+    throw new OAuthError('invalid_client', 401, 'Client JWT authentication is not enabled');
+  }
+
   let header: jose.ProtectedHeaderParameters;
   let unverified: jose.JWTPayload;
   try {
@@ -136,9 +142,15 @@ async function authenticateViaClientAssertion(req: Request, tenantId: string): P
   let verifyKey: Uint8Array | ReturnType<typeof jose.createLocalJWKSet> | ReturnType<typeof jose.createRemoteJWKSet>;
 
   if (header.alg === 'HS256') {
+    if (!isEnabled('clientSecretJwt')) {
+      throw new OAuthError('invalid_client', 401, 'client_secret_jwt authentication is not enabled');
+    }
     authMethod = 'client_secret_jwt';
     verifyKey = new TextEncoder().encode(row.clientSecret);
   } else if (header.alg === 'RS256' || header.alg === 'ES256') {
+    if (!isEnabled('privateKeyJwt')) {
+      throw new OAuthError('invalid_client', 401, 'private_key_jwt authentication is not enabled');
+    }
     authMethod = 'private_key_jwt';
     if (row.jwks) {
       verifyKey = jose.createLocalJWKSet(JSON.parse(row.jwks));
